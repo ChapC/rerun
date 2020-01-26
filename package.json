@@ -1,0 +1,36 @@
+{
+  "name": "node-rerun",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start:dev": "nodemon",
+    "start": "npm run build && node build/index.js",
+    "build": "rimraf ./build && tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "Chap Calanan",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^13.5.0",
+    "nodemon": "^2.0.2",
+    "rimraf": "^3.0.0",
+    "ts-node": "^8.6.2",
+    "typescript": "^3.7.5"
+  },
+  "dependencies": {
+    "@types/express": "^4.17.2",
+    "@types/express-ws": "^3.0.0",
+    "@types/recursive-readdir": "^2.2.0",
+    "@types/ws": "^7.2.0",
+    "colors": "^1.4.0",
+    "express": "^4.17.1",
+    "express-ws": "^4.0.0",
+    "ffprobe": "^1.1.0",
+    "ffprobe-static": "^3.0.0",
+    "jsdom": "^16.0.1",
+    "obs-websocket-js": "^4.0.0",
+    "recursive-readdir": "^2.2.2"
+  }
+}
