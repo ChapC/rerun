@@ -112,7 +112,10 @@ export class RerunGraphicRenderer implements ContentRenderer {
     }
 
     unloadMedia() : Promise<void> {
-        this.sendGraphicEvent(this.currentGraphic.location.altPath);
+        if (this.currentGraphic != null) { //Already unloaded
+            this.sendGraphicEvent(this.currentGraphic.location.altPath);
+            this.currentGraphic = null;
+        }
         return Promise.resolve();
     }
 

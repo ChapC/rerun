@@ -12,6 +12,10 @@ import { ContentBlock } from "./ContentBlock";
 import { ScheduleChange } from './ScheduleChange';
 import { WebsocketHeartbeat } from './WebsocketHeartbeat';
 import { OBSConnection } from './OBSConnection';
+import { UserEvent } from './UserEvent';
+import { PlayerBasedEvent } from './UserEventTypes';
+import { ShowGraphicAction } from './UserEventActionTypes';
+import { UserEventManager } from "./UserEventManager";
 
 const express = require('express');
 const app = express();
@@ -66,6 +70,7 @@ class RerunStateObject {
     connectedGraphicClients: {[ipAddress: string] : WebSocket} = {};
     connectedControlPanels: {[ipAddress: string] : WebSocket} = {};
     player: Player;
+    userEventManager: UserEventManager;
 };
 let rerunState = new RerunStateObject();
 
@@ -167,20 +172,6 @@ const startUpPromise = Promise.resolve().then(() => {
 
 }).then(() => {
 
-    console.info('[Startup] Opening graphic layer websocket...');
-    rerunState.connectedGraphicClients = {} as {[ipAddress: string] : WebSocket} ; //IP - WS dictionary
-
-    app.ws('/graphicEvents', function(ws:WebSocket, req:ClientRequest) {
-        console.info('Graphic client ['+ req.connection.remoteAddress +'] connected');
-        rerunState.connectedGraphicClients[req.connection.remoteAddress] = ws;
-        ws.on('close', () => {
-            console.info('Graphic client ['+ req.connection.remoteAddress +'] disconnected');
-            delete rerunState.connectedGraphicClients[req.connection.remoteAddress];
-        });
-    });
-
-}).then(() => {
-
     console.info('[Startup] Creating player instance...');
 
     const openWebVideoBuffers: {[sourceUrl: string] : BufferedWebVideo} = {};
@@ -199,6 +190,38 @@ const startUpPromise = Promise.resolve().then(() => {
     rerunState.player.on('queueChange', (newQueue) => {
         sendControlPanelAlert('setPlayerState', rerunState.player.getState());
     });
+
+}).then(() => {
+
+    console.info('[Startup] Opening graphic layer websocket...');
+    rerunState.connectedGraphicClients = {} as {[ipAddress: string] : WebSocket} ; //IP - WS dictionary
+
+    app.ws('/graphicEvents', function(ws:WebSocket, req:ClientRequest) {
+        console.info('Graphic client ['+ req.connection.remoteAddress +'] connected');
+        rerunState.connectedGraphicClients[req.connection.remoteAddress] = ws;
+        ws.on('close', () => {
+            console.info('Graphic client ['+ req.connection.remoteAddress +'] disconnected');
+            delete rerunState.connectedGraphicClients[req.connection.remoteAddress];
+        });
+
+        //Check if a rerun graphic is currently playing and, if so, send the start event now
+        const currentBlock = rerunState.player.getState().currentBlock;
+        if (currentBlock.media.type === MediaObject.Type.RerunTitle) {
+            sendGraphicEvent(currentBlock.media.location.path, req.connection.remoteAddress);
+        }
+    });
+
+}).then(() => {
+
+    console.info('[Startup] Fetching UserEvents...');
+    //TODO Import events from a json file
+    rerunState.userEventManager = new UserEventManager();    
+
+    let ev = new PlayerBasedEvent('Inbetween title screen', 
+        rerunState.player, PlayerBasedEvent.TargetEvent.InBetweenPlayback, 1, 
+        new ShowGraphicAction(sendGraphicEvent, 'show-screen', 2000, 'hide-screen'), 1000
+    );
+    const id = rerunState.userEventManager.addEvent(ev);
 
 }).then(() => {
 
@@ -255,7 +278,7 @@ const startUpPromise = Promise.resolve().then(() => {
 
     console.info(colors.bold.green('Rerun ready! View the control panel at ' + colors.underline('http://localhost:8080')));
 
-}).catch((error) => console.error('Failed to start Rerun:', error)).then(() => {
+}).catch((error) => console.error(colors.red('Failed to start Rerun:'), error)).then(() => {
     //Startup finished
 
 
@@ -363,12 +386,23 @@ function importGraphicHTML(pathToHTMLFile:string, graphicLayerName:string) : str
     return graphicDom.serialize();
 }
 
-function sendGraphicEvent(event:string) {
+function sendGraphicEvent(event:string, toAddress?:string) {
     //Graphic events contain the event name and the player's current state
     let eventObj = {name: event, playerState: rerunState.player.getState()}
-    console.info('[Graphic event] ' + event);
-    for (let socketIP in rerunState.connectedGraphicClients) {
-        rerunState.connectedGraphicClients[socketIP].send(JSON.stringify(eventObj));
+
+    if (toAddress) {
+        //Send the event to this address only
+        console.info('[Graphic event-' + toAddress + '] ' + event);
+        let client = rerunState.connectedGraphicClients[toAddress];
+        if (client != null) {
+            client.send(JSON.stringify(eventObj));
+        }
+    } else {
+        //Send the event to all graphic clients
+        console.info('[Graphic event-all] ' + event);
+        for (let socketIP in rerunState.connectedGraphicClients) {
+            rerunState.connectedGraphicClients[socketIP].send(JSON.stringify(eventObj));
+        }
     }
 }
 
@@ -428,6 +462,9 @@ function handleControlPanelRequest(requestName: string, data: any, respondWith: 
             } else {
                 respondWithError(invalidTypeError);
             }
+            break;
+        case 'getEvents': //Requested a list of UserEvents
+            respondWith(rerunState.userEventManager.getEvents());
             break;
         case 'playerRefresh': //The control panel requested an update on the player state
             respondWith(rerunState.player.getState());
