@@ -12,7 +12,10 @@ export class ShowGraphicAction extends UserEvent.Action {
         setTimeout(() => this.sendGraphicEvent(this.eventOut), outDelay + this.animInTime);
     }
 
-    constructor(public sendGraphicEvent: (s: string) => void, public eventIn: string, public animInTime: number, public eventOut?: string) {
+    constructor(public sendGraphicEvent: (s: string) => void, public eventIn: string, public animInTime?: number, public eventOut?: string) {
         super();
+        if (!animInTime) {
+            this.animInTime = 0;
+        }
     }
 }

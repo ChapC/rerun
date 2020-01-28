@@ -12,7 +12,7 @@ export abstract class UserEvent {
 
 export namespace UserEvent {
     export enum Type { 
-        Player = 'player' //An event that triggers when something player-related happens (eg. content block starts, finishes, deleted)
+        Player = 'Player' //An event that triggers when something player-related happens (eg. content block starts, finishes, deleted)
     };
 
     export abstract class Action {

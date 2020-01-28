@@ -101,11 +101,8 @@ export class Player {
         targetRenderer.loadMedia(nextBlock.media).then(() => {
             targetRenderer.play().then(() => {
                 this.startCurrentBlockTimer(nextBlock);
-                this.info('Started new ContentBlock "' + nextBlock.media.name + '"');
-                
-                if (this.queue.length > 0) {
-                    this.attemptNextBlockPreload();
-                }
+                this.info('Started new ContentBlock "' + nextBlock.media.name + '"');                
+                this.attemptNextBlockPreload();
             }).catch(error => this.error('Error while starting playback: ', error));
         }).catch(error => this.error('Error while loading media: ', error));
 
@@ -115,6 +112,7 @@ export class Player {
     //Immediately set and play the current content block. Does not affect the queue.
     setCurrentBlockNow(newBlock:ContentBlock, unloadDelayMs: number = 0) {
         if (this.activePause != null) {
+            //TODO: This should be allowed, it should just stop the pause early and play newBlock
             this.info('Tried to set current block while pause active');
             return;
         }
@@ -179,6 +177,7 @@ export class Player {
                 }
 
                 if (this.progressMs >= newBlock.media.durationMs) {
+                    //The current content block is finished
                     clearInterval(this.currentBlockInterval);
 
                     //Check if there are any inbetween pauses set
@@ -242,6 +241,11 @@ export class Player {
     //Load the next block into its renderer. This will only happen if the next block uses a different renderer than the current.
     private attemptNextBlockPreload(forceLoad: boolean = false) {
         let nextBlock = this.queue[0];
+
+        if (nextBlock == null) {
+            return; //No next block
+        }
+
         if (!forceLoad && nextBlock.media.type === this.currentBlock.media.type) {
             //Can't preload the next block; its renderer is already in use
             return;
@@ -249,7 +253,16 @@ export class Player {
         this.info('Preloading the next block');
         let targetRenderer = this.rendererMap[nextBlock.media.type].renderer;
 
-        targetRenderer.loadMedia(nextBlock.media).catch(error => error('Failed to load next block into renderer: ', error));
+        if (targetRenderer.getLoadedMedia() != null) {
+            //If the renderer already has media loaded, unload it first
+            targetRenderer.unloadMedia().then(() => {
+                targetRenderer.loadMedia(nextBlock.media).catch(error => error('Failed to load next block into renderer: ', error));
+            }).catch(error => error('Failed to load next block into renderer: Error while unloading current block - ', error));
+        } else {
+            //Nothing loaded, load the new media immediately
+            targetRenderer.loadMedia(nextBlock.media).catch(error => error('Failed to load next block into renderer: ', error));
+        }
+
     }
 
     getState() : PlayerState {

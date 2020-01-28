@@ -67,8 +67,8 @@ class OBSStateObject {
 export type MediaTypeRendererMap = {[mediaType in MediaObject.Type] : {renderer: ContentRenderer, focus: Function}};
 class RerunStateObject {
     obs: OBSStateObject; renderers: MediaTypeRendererMap = {} as MediaTypeRendererMap;
-    connectedGraphicClients: {[ipAddress: string] : WebSocket} = {};
-    connectedControlPanels: {[ipAddress: string] : WebSocket} = {};
+    connectedGraphicClients: WebSocket[] = [];
+    connectedControlPanels: WebSocket[] = [];
     player: Player;
     userEventManager: UserEventManager;
 };
@@ -191,23 +191,27 @@ const startUpPromise = Promise.resolve().then(() => {
         sendControlPanelAlert('setPlayerState', rerunState.player.getState());
     });
 
+    rerunState.player.on('paused', (pauseReason) => sendControlPanelAlert('setPlayerState', rerunState.player.getState()));
+
 }).then(() => {
 
     console.info('[Startup] Opening graphic layer websocket...');
-    rerunState.connectedGraphicClients = {} as {[ipAddress: string] : WebSocket} ; //IP - WS dictionary
+    rerunState.connectedGraphicClients = [];
 
     app.ws('/graphicEvents', function(ws:WebSocket, req:ClientRequest) {
         console.info('Graphic client ['+ req.connection.remoteAddress +'] connected');
-        rerunState.connectedGraphicClients[req.connection.remoteAddress] = ws;
+        rerunState.connectedGraphicClients.push(ws);
+        new WebsocketHeartbeat(ws);
+
         ws.on('close', () => {
             console.info('Graphic client ['+ req.connection.remoteAddress +'] disconnected');
-            delete rerunState.connectedGraphicClients[req.connection.remoteAddress];
+            rerunState.connectedGraphicClients.splice(rerunState.connectedGraphicClients.indexOf(ws), 1);
         });
 
         //Check if a rerun graphic is currently playing and, if so, send the start event now
         const currentBlock = rerunState.player.getState().currentBlock;
         if (currentBlock.media.type === MediaObject.Type.RerunTitle) {
-            sendGraphicEvent(currentBlock.media.location.path, req.connection.remoteAddress);
+            sendGraphicEvent(currentBlock.media.location.path, ws);
         }
     });
 
@@ -217,11 +221,18 @@ const startUpPromise = Promise.resolve().then(() => {
     //TODO Import events from a json file
     rerunState.userEventManager = new UserEventManager();    
 
-    let ev = new PlayerBasedEvent('Inbetween title screen', 
+    let titleEvent = new PlayerBasedEvent('Inbetween title screen', 
         rerunState.player, PlayerBasedEvent.TargetEvent.InBetweenPlayback, 1, 
         new ShowGraphicAction(sendGraphicEvent, 'show-screen', 2000, 'hide-screen'), 1000
     );
-    const id = rerunState.userEventManager.addEvent(ev);
+    rerunState.userEventManager.addEvent(titleEvent);
+
+    let lowerBarEvent = new PlayerBasedEvent('Up next bar', 
+        rerunState.player, PlayerBasedEvent.TargetEvent.PlaybackStart, 1, 
+        new ShowGraphicAction(sendGraphicEvent, 'show-lower'), 3000
+    );
+    rerunState.userEventManager.addEvent(lowerBarEvent);    
+
 
 }).then(() => {
 
@@ -229,7 +240,7 @@ const startUpPromise = Promise.resolve().then(() => {
 
     app.ws('/controlWS', function(ws:WebSocket, req:ClientRequest) {
         console.info('Control panel ['+ req.connection.remoteAddress +'] connected');
-        rerunState.connectedControlPanels[req.connection.remoteAddress] = ws;
+        rerunState.connectedControlPanels.push(ws);
         new WebsocketHeartbeat(ws);
 
         //Send the current status to the control panel
@@ -262,7 +273,7 @@ const startUpPromise = Promise.resolve().then(() => {
 
         ws.on('close', () => {
             console.info('Control panel ['+ req.connection.remoteAddress +'] disconnected');
-            delete rerunState.connectedControlPanels[req.connection.remoteAddress];
+            rerunState.connectedControlPanels.splice(rerunState.connectedControlPanels.indexOf(ws), 1);
         });
 
     });
@@ -386,17 +397,13 @@ function importGraphicHTML(pathToHTMLFile:string, graphicLayerName:string) : str
     return graphicDom.serialize();
 }
 
-function sendGraphicEvent(event:string, toAddress?:string) {
+function sendGraphicEvent(event:string, toSocket?:WebSocket) {
     //Graphic events contain the event name and the player's current state
     let eventObj = {name: event, playerState: rerunState.player.getState()}
 
-    if (toAddress) {
-        //Send the event to this address only
-        console.info('[Graphic event-' + toAddress + '] ' + event);
-        let client = rerunState.connectedGraphicClients[toAddress];
-        if (client != null) {
-            client.send(JSON.stringify(eventObj));
-        }
+    if (toSocket) {
+        //Send the event to this socket only
+        toSocket.send(JSON.stringify(eventObj));
     } else {
         //Send the event to all graphic clients
         console.info('[Graphic event-all] ' + event);
@@ -418,6 +425,7 @@ const invalidArgumentsError = {code: 'InvalidArguments', message: 'The provided 
 
 function handleControlPanelRequest(requestName: string, data: any, respondWith: (obj:any) => void, respondWithError: (obj:any) => void) {
     switch (requestName) {
+        //Player requests
         case 'nextBlock': //Skip to the next scheduled ContentBlock
             if (rerunState.player.getQueueLength() === 0) {
                 respondWithError({code: 'NoNextBlock', message: 'There is no scheduled ContentBlock to play.'});
@@ -426,6 +434,17 @@ function handleControlPanelRequest(requestName: string, data: any, respondWith: 
 
             rerunState.player.progressQueue();
             respondWith({message: 'Moved to next ContentBlock'});
+            break;
+        case 'playerRefresh': //The control panel requested an update on the player state
+            respondWith(rerunState.player.getState());
+            break;
+        case 'stopToTitle':
+            rerunState.player.goToDefaultBlock(2000);
+            respondWith({message: 'Stopped to title block.'});
+            break;
+        case 'restartPlayback':
+            rerunState.player.restartCurrentBlock();
+            respondWith({message: 'Restarted current block.'});
             break;
         case 'scheduleChange': //A reorder or delete of a scheduled ContentBlock
             const requestedScheduleChange = ScheduleChange.makeNew(data);
@@ -463,19 +482,19 @@ function handleControlPanelRequest(requestName: string, data: any, respondWith: 
                 respondWithError(invalidTypeError);
             }
             break;
+        //Event requests
         case 'getEvents': //Requested a list of UserEvents
             respondWith(rerunState.userEventManager.getEvents());
             break;
-        case 'playerRefresh': //The control panel requested an update on the player state
-            respondWith(rerunState.player.getState());
-            break;
-        case 'stopToTitle':
-            rerunState.player.goToDefaultBlock(2000);
-            respondWith({message: 'Stopped to title block.'});
-            break;
-        case 'restartPlayback':
-            rerunState.player.restartCurrentBlock();
-            respondWith({message: 'Restarted current block.'});
+        case 'setEventEnabled': //Setting the enabled property of a UserEvent
+            if (data.eventId == null || data.enabled == null) {
+                respondWithError(invalidTypeError);
+                break;
+            }
+
+            rerunState.userEventManager.setEventEnabled(data.eventId, data.enabled);
+            respondWith({message: (data.enabled ? 'Enabled' : 'Disabled') + ' event ID ' + data.eventId});
+            sendControlPanelAlert('setEventList', rerunState.userEventManager.getEvents());
             break;
         default:
             console.info('Unknown control panel request "' + requestName + '"');
