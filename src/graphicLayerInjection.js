@@ -14,22 +14,38 @@ const initRerunReference = () => {
             reconnectTimeout = setTimeout(attemptReconnect, 5000);
         }
     }
+
     function onConnectionLost(event) {
         console.error("[node-rerun] Lost connection to rerun server: ", event)
         
         clearTimeout(reconnectTimeout);
         reconnectTimeout = setTimeout(attemptReconnect, 5000);
     }
+
+    heartBeatTimeout = null;
+    function heartbeat() {
+        clearTimeout(this.heartBeatTimeout);
+
+        this.heartBeatTimeout = setTimeout(() => this.ws.close(), 10000 + 1500); //Server ping frequency + 1.5s wiggle
+    }
+
+
     function openSocket() {
         ws = new WebSocket('ws://' + localIP + ":8080/graphicEvents");
 
         ws.addEventListener('open', () => {
             console.info("[node-rerun] Connected to node-rerun server at " + localIP);
             ws.addEventListener('error', onConnectionLost);
-            ws.addEventListener('close', onConnectionLost);      
+            ws.addEventListener('close', onConnectionLost);
+            heartbeat();      
         });
 
         ws.addEventListener('message', (event) => {
+            if (event.data === 'ping') {
+                heartbeat();
+                return;
+            }
+
             let message = event.data;
             let serverEvent = JSON.parse(message);
             console.info('[node-rerun] Event from server: ' + serverEvent.name);
