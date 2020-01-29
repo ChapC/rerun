@@ -3,19 +3,19 @@ import WebSocket = require("ws");
 import { ClientRequest } from "http";
 import { Stats } from "fs";
 import { Request, Response, request } from "express";
-import { GraphicLayer } from './GraphicLayer';
-import { BufferedWebVideo } from "./BufferedWebVideo";
-import { MediaObject } from "./MediaObject";
-import { Player } from "./Player";
-import { ContentRenderer, OBSVideoRenderer, RerunGraphicRenderer } from './ContentRenderers';
-import { ContentBlock } from "./ContentBlock";
-import { ScheduleChange } from './ScheduleChange';
+import { GraphicLayer } from './graphiclayers/GraphicLayer';
+import { BufferedWebVideo } from "./playback/BufferedWebVideo";
+import { MediaObject } from "./playback/MediaObject";
+import { Player } from "./playback/Player";
+import { ContentRenderer, OBSVideoRenderer, RerunGraphicRenderer } from './playback/ContentRenderers';
+import { ContentBlock } from "./playback/ContentBlock";
+import { ScheduleChange } from './playback/ScheduleChange';
 import { WebsocketHeartbeat } from './WebsocketHeartbeat';
 import { OBSConnection } from './OBSConnection';
-import { UserEvent } from './UserEvent';
-import { PlayerBasedEvent } from './UserEventTypes';
-import { ShowGraphicAction } from './UserEventActionTypes';
-import { UserEventManager } from "./UserEventManager";
+import { UserEvent } from './events/UserEvent';
+import { PlayerBasedEvent } from './events/UserEventTypes';
+import { ShowGraphicAction } from './events/UserEventActionTypes';
+import { UserEventManager } from "./events/UserEventManager";
 
 const express = require('express');
 const app = express();
@@ -29,7 +29,7 @@ const recursive = require("recursive-readdir");
 const colors = require('colors');
 const ffprobe = require('ffprobe'), ffprobeStatic = require('ffprobe-static');
 
-const initRerunReference = require('./graphicLayerInjection').script;
+const initRerunReference = require('./graphiclayers/graphicLayerInjection').script;
 
 //Find my local IP
 let localIP:string = null;

@@ -1,5 +1,5 @@
 import {MediaObject} from './MediaObject';
-import { OBSConnection } from './OBSConnection';
+import { OBSConnection } from '../OBSConnection';
 
 //Describes a renderer that can display certain content types
 export interface ContentRenderer {

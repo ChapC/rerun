@@ -1,6 +1,6 @@
 import { UserEvent } from './UserEvent';
 import { ShowGraphicAction } from './UserEventActionTypes';
-import {Player} from './Player';
+import {Player} from '../playback/Player';
 
 export class PlayerBasedEvent extends UserEvent {
     type = UserEvent.Type.Player;

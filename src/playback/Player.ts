@@ -1,7 +1,7 @@
 import {ContentBlock} from './ContentBlock';
 import {MediaObject} from './MediaObject';
 import {ContentRenderer} from './ContentRenderers';
-import {MediaTypeRendererMap} from './index';
+import {MediaTypeRendererMap} from '../index';
 const colors = require('colors');
 
 export class Player {
