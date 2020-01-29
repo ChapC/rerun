@@ -4,15 +4,15 @@ export class ShowGraphicAction extends UserEvent.Action {
     type = UserEvent.Action.Type.GraphicEvent;
 
     execute() {
-        this.sendGraphicEvent(this.eventIn);
+        this.sendGraphicEvent('in', this.targetLayer);
     }
 
     executeInThenOut(outDelay: number) {
-        this.sendGraphicEvent(this.eventIn);
-        setTimeout(() => this.sendGraphicEvent(this.eventOut), outDelay + this.animInTime);
+        this.sendGraphicEvent('in', this.targetLayer);
+        setTimeout(() => this.sendGraphicEvent('out', this.targetLayer), outDelay + this.animInTime);
     }
 
-    constructor(public sendGraphicEvent: (s: string) => void, public eventIn: string, public animInTime?: number, public eventOut?: string) {
+    constructor(public targetLayer: string, public sendGraphicEvent: (event: string, layer: string) => void, public animInTime?: number) {
         super();
         if (!animInTime) {
             this.animInTime = 0;

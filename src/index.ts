@@ -3,7 +3,6 @@ import WebSocket = require("ws");
 import { ClientRequest } from "http";
 import { Stats } from "fs";
 import { Request, Response, request } from "express";
-import { GraphicLayer } from './graphiclayers/GraphicLayer';
 import { BufferedWebVideo } from "./playback/BufferedWebVideo";
 import { MediaObject } from "./playback/MediaObject";
 import { Player } from "./playback/Player";
@@ -16,20 +15,17 @@ import { UserEvent } from './events/UserEvent';
 import { PlayerBasedEvent } from './events/UserEventTypes';
 import { ShowGraphicAction } from './events/UserEventActionTypes';
 import { UserEventManager } from "./events/UserEventManager";
+import { GraphicManager } from "./graphiclayers/GraphicManager";
 
 const express = require('express');
 const app = express();
 const expressWs = require('express-ws')(app);
 const path = require('path');
 const fs = require('fs');
-const jsdom = require("jsdom");
-const { JSDOM } = jsdom;
 const os = require('os');
-const recursive = require("recursive-readdir");
 const colors = require('colors');
 const ffprobe = require('ffprobe'), ffprobeStatic = require('ffprobe-static');
 
-const initRerunReference = require('./graphiclayers/graphicLayerInjection').script;
 
 //Find my local IP
 let localIP:string = null;
@@ -67,7 +63,7 @@ class OBSStateObject {
 export type MediaTypeRendererMap = {[mediaType in MediaObject.Type] : {renderer: ContentRenderer, focus: Function}};
 class RerunStateObject {
     obs: OBSStateObject; renderers: MediaTypeRendererMap = {} as MediaTypeRendererMap;
-    connectedGraphicClients: WebSocket[] = [];
+    graphicsManager: GraphicManager;
     connectedControlPanels: WebSocket[] = [];
     player: Player;
     userEventManager: UserEventManager;
@@ -109,6 +105,28 @@ const startUpPromise = Promise.resolve().then(() => {
 
 }).then(() => {
 
+    console.info('[Startup] Importing graphics packages...')
+    const packagePath = './graphics';
+
+    //TODO: Create /graphics if it doesn't exist
+    rerunState.graphicsManager = new GraphicManager(packagePath, localIP, () => rerunState.player.getState(), app);
+    
+    //Serve up all the static files in the graphics package path (JS, images)
+    app.use(express.static(packagePath)); //TODO: Only serve the static files of the active package
+
+    return new Promise((resolve, reject) => {
+        //Scan for GraphicsPackage definitions
+        rerunState.graphicsManager.importPackages().then((packages) => {
+            console.info('Imported (' + packages.length + ') graphics packages');
+
+            rerunState.graphicsManager.setActivePackage('FHTV graphics');
+
+            resolve();
+        }).catch(err => reject('Failed to import graphics packages: ' + err.toString()));
+    });
+    
+}).then(() => {
+
     console.info('[Startup] Preparing content renderers...');
 
     //Local video renderer
@@ -120,55 +138,10 @@ const startUpPromise = Promise.resolve().then(() => {
     };
 
     //Graphic title renderer
-    const graphicTitleRenderer = new RerunGraphicRenderer(sendGraphicEvent);
+    const graphicTitleRenderer = new RerunGraphicRenderer(rerunState.graphicsManager.sendGraphicEvent);
     rerunState.renderers[MediaObject.Type.RerunTitle] = {
-        renderer: graphicTitleRenderer, focus: () => {} //Noop - the graphic renderer is on a user-controlled OBS source, we don't control it
+        renderer: graphicTitleRenderer, focus: () => {} //Noop - the graphic renderer is on a user-defined OBS source, we don't control it
     };
-
-}).then(() => {
-
-    console.info('[Startup] Importing graphics layers...')
-
-    //The user will select which graphics package (top-level folder) to use
-    //Here we'll use fhtv
-    const packagePath = path.join(__dirname, '../graphics/fhtv');
-    const activeGraphicsLayers: {[layerName: string] : GraphicLayer} = {};
-    
-    //Serve up all the static files in the graphics package (JS, images)
-    app.use(express.static(packagePath));
-
-    console.info('Looking for graphics layers in ' + packagePath + '...');
-    //Scan the graphics package (folder) for graphics layers (html files)
-    const htmlOnly = (file:string, stats:Stats) => !stats.isDirectory() && path.extname(file) != '.html';
-
-    return new Promise((resolve, reject) => {
-        recursive(packagePath, [htmlOnly], (err:Error, files:string[]) => {
-            if (!err) {
-                //files is a list of .html file paths
-                files.forEach((filePath) => {
-                    let layerName = path.basename(filePath).substring(0, path.basename(filePath).length - 5);
-                    
-                    let newLayer = new GraphicLayer(filePath, layerName);
-    
-                    activeGraphicsLayers[layerName] = newLayer;
-                    
-                    //Import each graphic layer's HTML and inject the rerun script into it
-                    let layerHTML = importGraphicHTML(newLayer.path, newLayer.name);
-                    newLayer.html = layerHTML;
-                
-                    //Create a route to serve this layer
-                    app.get('/layer/' + newLayer.name, (req:Request, res:Response) => res.send(newLayer.html));
-                    
-                    console.info('Serving graphics layer "' + newLayer.name + '" at /layer/' + newLayer.name);
-                });
-                console.info('Found (' + files.length + ') graphics layers');
-                resolve();
-            } else {
-                console.error('Could not scan package \'' + packagePath + '\' for graphics layers: ', err);
-                reject('Failed to import graphics layers');
-            }
-        });
-    });
 
 }).then(() => {
 
@@ -178,7 +151,7 @@ const startUpPromise = Promise.resolve().then(() => {
 
     //Use the title screen graphic as the default block (when nothing else is available)
     const titleScreenGraphicName = 'Title screen';
-    const titleScreenGraphicLocation = new MediaObject.Location(MediaObject.Location.Type.LocalURL, 'show-screen', 'hide-screen');
+    const titleScreenGraphicLocation = new MediaObject.Location(MediaObject.Location.Type.LocalURL, 'FHTV title slate');
     const titleBlock = new ContentBlock('titleBlock', new MediaObject(MediaObject.Type.RerunTitle, titleScreenGraphicName, titleScreenGraphicLocation, Number.POSITIVE_INFINITY));
 
     rerunState.player = new Player(rerunState.renderers, titleBlock);
@@ -196,23 +169,16 @@ const startUpPromise = Promise.resolve().then(() => {
 }).then(() => {
 
     console.info('[Startup] Opening graphic layer websocket...');
-    rerunState.connectedGraphicClients = [];
 
-    app.ws('/graphicEvents', function(ws:WebSocket, req:ClientRequest) {
-        console.info('Graphic client ['+ req.connection.remoteAddress +'] connected');
-        rerunState.connectedGraphicClients.push(ws);
+    app.ws('/graphicEvents', function(ws:WebSocket, req:any) {
+        console.info('Graphic client [' + req.query.layer + '@' + req.connection.remoteAddress +'] connected');
         new WebsocketHeartbeat(ws);
-
         ws.on('close', () => {
-            console.info('Graphic client ['+ req.connection.remoteAddress +'] disconnected');
-            rerunState.connectedGraphicClients.splice(rerunState.connectedGraphicClients.indexOf(ws), 1);
+            console.info('Graphic client [' + req.query.layer + '@' + req.connection.remoteAddress +'] disconnected');
+            rerunState.graphicsManager.removeWebsocket(ws, req.query.layer);
         });
 
-        //Check if a rerun graphic is currently playing and, if so, send the start event now
-        const currentBlock = rerunState.player.getState().currentBlock;
-        if (currentBlock.media.type === MediaObject.Type.RerunTitle) {
-            sendGraphicEvent(currentBlock.media.location.path, ws);
-        }
+        rerunState.graphicsManager.addWebsocket(ws, req.query.layer);
     });
 
 }).then(() => {
@@ -223,13 +189,13 @@ const startUpPromise = Promise.resolve().then(() => {
 
     let titleEvent = new PlayerBasedEvent('Inbetween title screen', 
         rerunState.player, PlayerBasedEvent.TargetEvent.InBetweenPlayback, 1, 
-        new ShowGraphicAction(sendGraphicEvent, 'show-screen', 2000, 'hide-screen'), 1000
+        new ShowGraphicAction('FHTV title slate', rerunState.graphicsManager.sendGraphicEvent, 2000), 1000
     );
     rerunState.userEventManager.addEvent(titleEvent);
 
     let lowerBarEvent = new PlayerBasedEvent('Up next bar', 
         rerunState.player, PlayerBasedEvent.TargetEvent.PlaybackStart, 1, 
-        new ShowGraphicAction(sendGraphicEvent, 'show-lower'), 3000
+        new ShowGraphicAction('Up next bar', rerunState.graphicsManager.sendGraphicEvent), 3000
     );
     rerunState.userEventManager.addEvent(lowerBarEvent);    
 
@@ -240,8 +206,8 @@ const startUpPromise = Promise.resolve().then(() => {
 
     app.ws('/controlWS', function(ws:WebSocket, req:ClientRequest) {
         console.info('Control panel ['+ req.connection.remoteAddress +'] connected');
-        rerunState.connectedControlPanels.push(ws);
         new WebsocketHeartbeat(ws);
+        rerunState.connectedControlPanels.push(ws);
 
         //Send the current status to the control panel
         ws.send(JSON.stringify({
@@ -249,6 +215,9 @@ const startUpPromise = Promise.resolve().then(() => {
         }));
 
         ws.on('message', (message) => {
+            if (message === 'pong') {
+                return;
+            }
             let cpRequest = JSON.parse(message.toString());
 
             if (cpRequest != null) {
@@ -359,62 +328,7 @@ function mediaObjectFromVideoFile(filePath: string) : Promise<MediaObject> {
     });
 }
 
-
-/*
-//Test ContentBlocks
-const getEmptyMedia = (name: string) => {
-    let m = new MediaObject(MediaObject.Type.LocalVideoFile, name, new MediaObject.Location(MediaObject.Location.Type.LocalURL, 'fake/path/to/video.mp4'), 180000);
-    return m; //3mins long
-}
-const testBlocks = [];
-for (let i = 0; i < 10; i++) {
-    let block = new ContentBlock('testBlock' + i, getEmptyMedia('testMedia-' + i));
-    testBlocks.push(block);
-    rerunState.player.enqueueBlock(block);
-}
-*/
-
-//Read in a graphic layer HTML file, inject the rerun script and return the resulting html document as a string
-function importGraphicHTML(pathToHTMLFile:string, graphicLayerName:string) : string {
-    //Read in the HTML from the target file
-    let rawHTML = fs.readFileSync(pathToHTMLFile);
-
-    //Load it into a virtual DOM so that we can modify it
-    let graphicDom = new JSDOM(rawHTML);
-    //Inject some JS into the DOM that creates the window.rerun link for the graphic can access
-    let initFunctionString = initRerunReference.toString().slice(13, -1); //Remove the "function() {" and "}" from the function string
-    //Replace any server-side variables with their string value
-    initFunctionString = initFunctionString.replace(/localIP/g, "'" + localIP + "'");
-    initFunctionString = initFunctionString.replace(/myGraphicsLayerName/g, "'" + graphicLayerName + "'");
-    
-    let initRerunScriptTag = graphicDom.window.document.createElement("script");
-    initRerunScriptTag.innerHTML = initFunctionString;
-    
-    //Add this script tag to <head> as the first child
-    let headTag = graphicDom.window.document.getElementsByTagName('head')[0];
-    headTag.insertBefore(initRerunScriptTag, headTag.firstChild);
-
-    return graphicDom.serialize();
-}
-
-function sendGraphicEvent(event:string, toSocket?:WebSocket) {
-    //Graphic events contain the event name and the player's current state
-    let eventObj = {name: event, playerState: rerunState.player.getState()}
-
-    if (toSocket) {
-        //Send the event to this socket only
-        toSocket.send(JSON.stringify(eventObj));
-    } else {
-        //Send the event to all graphic clients
-        console.info('[Graphic event-all] ' + event);
-        for (let socketIP in rerunState.connectedGraphicClients) {
-            rerunState.connectedGraphicClients[socketIP].send(JSON.stringify(eventObj));
-        }
-    }
-}
-
 let cpRequestIDCounter = 0;
-
 function getReqID() : number {
     cpRequestIDCounter++;
     return cpRequestIDCounter;

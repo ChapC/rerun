@@ -95,14 +95,14 @@ export class OBSVideoRenderer implements ContentRenderer {
 }
 //Sends graphic events when media starts or stops. Used for title screens.
 export class RerunGraphicRenderer implements ContentRenderer {
-    private sendGraphicEvent: (event: string) => void;
-    constructor(sendGraphicEvent: (event: string) => void) {
+    private sendGraphicEvent: (event: string, forLayer: string) => void;
+    constructor(sendGraphicEvent: (event: string, forLayer: string) => void) {
         this.sendGraphicEvent = sendGraphicEvent;
     }
 
-    /*In this case, the media's location object paths are names of graphic events.
-    * On play, the renderer sends the location.path event.
-    * On unload, the renderer sends the location.altPath event.
+    /*In this case, the media's location object path is the name of the target graphic layer
+    * On play, the renderer sends the 'in' event to the target layer.
+    * On unload, the renderer sends the 'out' event to the target layer.
     */
     currentGraphic : MediaObject;
 
@@ -113,7 +113,7 @@ export class RerunGraphicRenderer implements ContentRenderer {
 
     unloadMedia() : Promise<void> {
         if (this.currentGraphic != null) { //Already unloaded
-            this.sendGraphicEvent(this.currentGraphic.location.altPath);
+            this.sendGraphicEvent('out', this.currentGraphic.location.path);
             this.currentGraphic = null;
         }
         return Promise.resolve();
@@ -124,7 +124,7 @@ export class RerunGraphicRenderer implements ContentRenderer {
     }
 
     play() : Promise<void> {
-        this.sendGraphicEvent(this.currentGraphic.location.path);
+        this.sendGraphicEvent('in', this.currentGraphic.location.path);
         return Promise.resolve();
     }
 

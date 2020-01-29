@@ -1,10 +1,9 @@
 //This function will be stringified and injected into the graphics JS files
 const initRerunReference = () => {
     window.rerun = { version: 0.1 }
+    const wsAddress = 'ws://' + localIP + ":8080/graphicEvents?layer=" + mLayerName;
 
     console.info("[node-rerun] Version " + window.rerun.version);
-
-    let ws = new WebSocket('ws://' + localIP + ":8080/graphicEvents");
 
     let reconnectTimeout = null;
     function attemptReconnect() {
@@ -26,12 +25,14 @@ const initRerunReference = () => {
     function heartbeat() {
         clearTimeout(this.heartBeatTimeout);
 
-        this.heartBeatTimeout = setTimeout(() => this.ws.close(), 10000 + 1500); //Server ping frequency + 1.5s wiggle
+        this.heartBeatTimeout = setTimeout(() => this.ws.close(), 5000 + 1500); //Server ping frequency + 1.5s wiggle
+
+        this.ws.send('pong');
     }
 
 
     function openSocket() {
-        ws = new WebSocket('ws://' + localIP + ":8080/graphicEvents");
+        ws = new WebSocket(wsAddress);
 
         ws.addEventListener('open', () => {
             console.info("[node-rerun] Connected to node-rerun server at " + localIP);
@@ -56,7 +57,6 @@ const initRerunReference = () => {
     openSocket();
 
     window.rerun.eventCallbacks = {};
-    window.rerun.setTimings = setTimings;
     window.rerun.on = attachEventCallback;
 
     const pendingEvents = {};
@@ -67,13 +67,6 @@ const initRerunReference = () => {
             //There is no callback registered for this event yet - hold onto it
             pendingEvents[event.name] = event;
         }
-    }
-
-    function setTimings(timingsMap) {
-        let timingsObj = {
-            sourceGraphic: myGraphicsLayerName, type: 'timings', timingsMap: timingsMap
-        };
-        ws.send(JSON.stringify(timingsObj));
     }
 
     function attachEventCallback(event, callback) {
