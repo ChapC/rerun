@@ -400,16 +400,38 @@ function handleControlPanelRequest(requestName: string, data: any, respondWith: 
         case 'getEvents': //Requested a list of UserEvents
             respondWith(rerunState.userEventManager.getEvents());
             break;
+        case 'createEvent':
+            if (data.type == null) {
+                respondWith(invalidArgumentsError);
+                break;
+            }
+
+            let newEvent = createUserEventFromRequest(data);
+            let newEventId = rerunState.userEventManager.addEvent(newEvent);
+            respondWith({message: 'Created new event with id=' + newEventId});
+            sendControlPanelAlert('setEventList', rerunState.userEventManager.getEvents());
+
+            break;
         case 'updateEvent': //Request to update an existing userEvent
             if (data.eventId == null || data.newEvent == null) {
                 respondWith(invalidArgumentsError);
                 break;
             }
 
-            let newEvent = createUserEventFromRequest(data.newEvent);
+            let updatedEvent = createUserEventFromRequest(data.newEvent);
 
-            rerunState.userEventManager.updateEvent(data.eventId, newEvent);
+            rerunState.userEventManager.updateEvent(data.eventId, updatedEvent);
             respondWith({message: 'Updated event id=' + data.eventId});
+            sendControlPanelAlert('setEventList', rerunState.userEventManager.getEvents());
+            break;
+        case 'deleteEvent':
+            if (data.eventId == null) {
+                respondWith(invalidArgumentsError);
+                break;
+            }
+
+            rerunState.userEventManager.removeEvent(data.eventId);
+            respondWith({message: 'Removed event with id =' + data.eventId});
             sendControlPanelAlert('setEventList', rerunState.userEventManager.getEvents());
             break;
         case 'setEventEnabled': //Setting the enabled property of a UserEvent
