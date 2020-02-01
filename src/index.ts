@@ -188,7 +188,7 @@ const startUpPromise = Promise.resolve().then(() => {
     rerunState.userEventManager = new UserEventManager();    
 
     let titleEvent = new PlayerBasedEvent('Inbetween title screen', 
-        rerunState.player, PlayerBasedEvent.TargetEvent.InBetweenPlayback, 1, 
+        rerunState.player, PlayerBasedEvent.TargetEvent.InBetweenPlayback, 3, 
         new ShowGraphicAction('FHTV title slate', rerunState.graphicsManager.sendGraphicEvent, 2000), 1000
     );
     rerunState.userEventManager.addEvent(titleEvent);
@@ -256,7 +256,7 @@ const startUpPromise = Promise.resolve().then(() => {
 
 }).then(() => {
 
-    console.info(colors.bold.green('Rerun ready! View the control panel at ' + colors.underline('http://localhost:8080')));
+    console.info(colors.bold.green('Rerun ready! View the control panel at ' + colors.underline('http://' + localIP + ':8080')));
 
 }).catch((error) => console.error(colors.red('Failed to start Rerun:'), error)).then(() => {
     //Startup finished
@@ -400,15 +400,31 @@ function handleControlPanelRequest(requestName: string, data: any, respondWith: 
         case 'getEvents': //Requested a list of UserEvents
             respondWith(rerunState.userEventManager.getEvents());
             break;
+        case 'updateEvent': //Request to update an existing userEvent
+            if (data.eventId == null || data.newEvent == null) {
+                respondWith(invalidArgumentsError);
+                break;
+            }
+
+            let newEvent = createUserEventFromRequest(data.newEvent);
+
+            rerunState.userEventManager.updateEvent(data.eventId, newEvent);
+            respondWith({message: 'Updated event id=' + data.eventId});
+            sendControlPanelAlert('setEventList', rerunState.userEventManager.getEvents());
+            break;
         case 'setEventEnabled': //Setting the enabled property of a UserEvent
             if (data.eventId == null || data.enabled == null) {
-                respondWithError(invalidTypeError);
+                respondWithError(invalidArgumentsError);
                 break;
             }
 
             rerunState.userEventManager.setEventEnabled(data.eventId, data.enabled);
             respondWith({message: (data.enabled ? 'Enabled' : 'Disabled') + ' event ID ' + data.eventId});
             sendControlPanelAlert('setEventList', rerunState.userEventManager.getEvents());
+            break;
+        //Graphics events
+        case 'getGraphicsPackages': //Requeted a list of available graphics packages
+            respondWith(rerunState.graphicsManager.getAvailablePackages());
             break;
         default:
             console.info('Unknown control panel request "' + requestName + '"');
@@ -420,5 +436,37 @@ function sendControlPanelAlert(event:string, data?:object) {
     let eventObj = {eventName: event, data: data}
     for (let socketIP in rerunState.connectedControlPanels) {
         rerunState.connectedControlPanels[socketIP].send(JSON.stringify(eventObj));
+    }
+}
+
+function createUserEventFromRequest(requestedEvent: any) : UserEvent {
+    if (requestedEvent.type === 'Player') {
+        let action = createActionFromRequest(requestedEvent.action);
+        try {
+            let playerEvent = new PlayerBasedEvent (
+                requestedEvent.name, rerunState.player, requestedEvent.targetPlayerEvent,
+                requestedEvent.frequency, action, requestedEvent.eventOffset
+            );
+            return playerEvent;
+        } catch (err) {
+            console.error('Failed to create PlayerBasedEvent from request:', err);
+        }
+    } else {
+        console.warn('Could not create UserEvent for unsupported event type "' + requestedEvent.type + '"');
+        return requestedEvent;
+    }
+}
+
+function createActionFromRequest(requestedAction: any) : UserEvent.Action {
+    if (requestedAction.type === 'GraphicEvent') {
+        try {
+            return new ShowGraphicAction(requestedAction.targetLayer, 
+                                         rerunState.graphicsManager.sendGraphicEvent, requestedAction.animInTime);
+        } catch (err) {
+            console.error('Failed to create GraphicEvent from request:', err);
+        }
+    } else {
+        console.warn('Could not create UserEvent action for unsupported action type "' + requestedAction.type + '"');
+        return requestedAction;
     }
 }

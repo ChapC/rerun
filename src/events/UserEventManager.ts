@@ -22,6 +22,16 @@ export class UserEventManager {
         delete this.events[eventId];
     }
 
+    updateEvent(eventId: number, newEvent: UserEvent) {
+        let targetEvent: ToggleableUserEvent = this.events[eventId];
+        
+        if (targetEvent != null) {
+            targetEvent.event.disable();
+            targetEvent.event = newEvent;
+            targetEvent.event.enable();
+        }
+    }
+
     getEvents() : ToggleableUserEvent[] {
         let allEvents = [];
         for (let id in this.events) {

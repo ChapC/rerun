@@ -29,6 +29,8 @@ export class GraphicManager {
 
     //Sends a graphic event to websockets from the target layer (and optionally the target websocket)
     sendGraphicEvent = (event:string, toLayer:string, toSocket?:WebSocket) => {
+        //TODO: Allow the user to load as many 'active' packages as they want    
+
         //Graphic events contain the event name and the player's current state
         let eventObj = {name: event, playerState: this.fetchPlayerState()}
     
@@ -163,6 +165,10 @@ export class GraphicManager {
             });
         });
     }
+
+    getAvailablePackages() : GraphicPackage[] {
+        return this.availablePackages;
+    }
 }
 
 function removeRoute(routePath: string, expressApp: any) {
@@ -268,4 +274,14 @@ class GraphicLayer {
 
         return layer;
     }
+
+    toJSON() : any {
+        return {
+            name: this.name, path: this.path, animationTimings: this.animationTimings
+        }
+    }
+}
+
+export class GraphicLayerReference {
+    constructor(public packageName: string, public layerName:string) {}
 }
