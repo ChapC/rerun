@@ -36,9 +36,11 @@ export class OBSVideoRenderer implements ContentRenderer {
     private currentMedia: MediaObject = null;
 
     loadMedia(media:MediaObject, useAltPath:boolean) : Promise<void> {
+        /* OBS needs to reload the block so that if the same video is playing it'll restart
         if (this.currentMedia != null && media.location.path === this.currentMedia.location.path) {
             return Promise.resolve(); //This media is already loaded
         }
+        */
 
         let playlistItem = new VLCPlaylistItem(media.location.path);
 
@@ -47,11 +49,14 @@ export class OBSVideoRenderer implements ContentRenderer {
         }
 
         return new Promise((resolve, reject) => {
-            //Add the file to the playlist
-            this.obsVideoPlayer.setSettings(new VLCSettings([playlistItem])).then(() => {
-                this.currentMedia = media;
-                //Ensure the source fills the whole screen (OBS automatically resizes it to match the video resolution)
-                this.obsVideoPlayer.centerAndFillScreen().then(resolve).catch(reject);
+            //Set the source as invisible (stops playback)
+            this.obsVideoPlayer.setVisible(false).then(() => {
+                //Add the file to the playlist
+                this.obsVideoPlayer.setSettings(new VLCSettings([playlistItem])).then(() => {
+                    this.currentMedia = media;
+                    //Ensure the source fills the whole screen (OBS automatically resizes it to match the video resolution)
+                    this.obsVideoPlayer.centerAndFillScreen().then(resolve).catch(reject);
+                }).catch(reject);
             }).catch(reject);
         });
     }

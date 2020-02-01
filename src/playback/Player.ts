@@ -46,8 +46,24 @@ export class Player {
         }
     }
 
-    updateBlockAt(index:number, newBlock:ContentBlock) {
+    updateBlockAt(blockId:string, newBlock:ContentBlock) {
+        let index = null;
+        for (let i = 0; i < this.queue.length; i++) {
+            let block = this.queue[i];
+            if (block.id == blockId) {
+                index = i;
+                break;
+            }
+        }
+
+        if (index == null) {
+            this.warn("Content block update failed: No block with id = " + blockId);
+            return;
+        }
+
         this.queue[index] = newBlock;
+        this.info('Updated block ' + newBlock.id);
+
         if (index === 0) {
             //Preload this block
             this.attemptNextBlockPreload();
@@ -250,7 +266,7 @@ export class Player {
             //Can't preload the next block; its renderer is already in use
             return;
         }
-        this.info('Preloading the next block');
+        this.info('Preloading the next block (' + nextBlock.media.name + ')');
         let targetRenderer = this.rendererMap[nextBlock.media.type].renderer;
 
         if (targetRenderer.getLoadedMedia() != null) {

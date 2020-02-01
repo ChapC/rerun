@@ -25,7 +25,7 @@ const fs = require('fs');
 const os = require('os');
 const colors = require('colors');
 const ffprobe = require('ffprobe'), ffprobeStatic = require('ffprobe-static');
-
+const uuidv4 = require('uuid/v4');
 
 //Find my local IP
 let localIP:string = null;
@@ -396,13 +396,44 @@ function handleControlPanelRequest(requestName: string, data: any, respondWith: 
                 respondWithError(invalidTypeError);
             }
             break;
+        //Content block requests
+        case 'updateContentBlock': //Requested to change an existing content block
+            if (data.block == null || data.block.id == null) {
+                respondWithError(invalidArgumentsError);
+                break;
+            }
+
+            //Try to create a new content block from the provided one
+            createContentBlockFromRequest(data.block).then((contentBlock: ContentBlock) => {
+                contentBlock.id = data.block.id; //Replace the generated id with the target id
+                rerunState.player.updateBlockAt(data.block.id, contentBlock);
+                respondWith({message: 'Updated block with id ' + data.block.id})
+            }).catch(error => {
+                console.error('Failed to create content block from request:', error);
+                respondWithError({message: error});
+            });
+            break;
+        case 'addContentBlock': //Requested to add a new content block to the queue
+            if (data.block == null) {
+                respondWithError(invalidArgumentsError);
+                break;
+            }
+
+            createContentBlockFromRequest(data.block).then((contentBlock: ContentBlock) => {
+                rerunState.player.enqueueBlock(contentBlock);
+                respondWith({message: 'Enqueued content block ' + data.block.id})
+            }).catch(error => {
+                console.error('Failed to enqueue new content block:', error);
+                respondWithError({message: error});
+            });
+            break;
         //Event requests
         case 'getEvents': //Requested a list of UserEvents
             respondWith(rerunState.userEventManager.getEvents());
             break;
         case 'createEvent':
             if (data.type == null) {
-                respondWith(invalidArgumentsError);
+                respondWithError(invalidArgumentsError);
                 break;
             }
 
@@ -414,7 +445,7 @@ function handleControlPanelRequest(requestName: string, data: any, respondWith: 
             break;
         case 'updateEvent': //Request to update an existing userEvent
             if (data.eventId == null || data.newEvent == null) {
-                respondWith(invalidArgumentsError);
+                respondWithError(invalidArgumentsError);
                 break;
             }
 
@@ -426,7 +457,7 @@ function handleControlPanelRequest(requestName: string, data: any, respondWith: 
             break;
         case 'deleteEvent':
             if (data.eventId == null) {
-                respondWith(invalidArgumentsError);
+                respondWithError(invalidArgumentsError);
                 break;
             }
 
@@ -459,6 +490,55 @@ function sendControlPanelAlert(event:string, data?:object) {
     for (let socketIP in rerunState.connectedControlPanels) {
         rerunState.connectedControlPanels[socketIP].send(JSON.stringify(eventObj));
     }
+}
+
+function createContentBlockFromRequest(requestedBlock: any) : Promise<ContentBlock> {
+    return new Promise((resolve, reject) => {
+        //Try to create the MediaObject
+        createMediaObjectFromRequest(requestedBlock.media).then((mediaObject : MediaObject) => {
+            let block = new ContentBlock(uuidv4(), mediaObject);
+            block.colour = requestedBlock.colour;
+            block.playbackConfig = requestedBlock.playbackConfig;
+            resolve(block);
+        }).catch(error => reject(error));
+    });
+}
+
+function createMediaObjectFromRequest(requestedMedia: any) : Promise<MediaObject> {
+    return new Promise((resolve, reject) => {
+        let newMedia = MediaObject.CreateEmpty(requestedMedia.type);
+        newMedia.name = requestedMedia.name;
+    
+        switch (requestedMedia.type) {
+            case 'Local video file':
+                //Check that the file exists
+                if (fs.existsSync(requestedMedia.location.path)) {
+                    if (!fs.lstatSync(requestedMedia.location.path).isDirectory()) {
+                        //Get file metadata for this media object
+                        mediaObjectFromVideoFile(requestedMedia.location.path).then((generatedMedia: MediaObject) => {
+                            generatedMedia.name = requestedMedia.name; //Set the requested name rather than the generated one
+                            resolve(generatedMedia);
+                        }).catch(error => reject(error));
+                    } else {
+                        reject('Failed to create MediaObject from request: Provided path is a directory, not a file');
+                    }
+                } else {
+                    reject("Failed to create MediaObject from request: File not found");
+                }
+                break;
+            case 'Youtube video':
+                reject('YT not yet implemented');
+                break;
+            case 'RTMP stream':
+                reject('RTMP not yet implemented');
+                break;
+            case 'Rerun title graphic':
+                reject('Rerun graphic not yet implemented');
+                break;
+            default:
+                reject('Unknown media type "' + requestedMedia.type + '"');
+        }
+    });
 }
 
 function createUserEventFromRequest(requestedEvent: any) : UserEvent {

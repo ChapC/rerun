@@ -12,6 +12,10 @@ export class MediaObject {
         this.durationMs = durationMs;
     }
 
+    static CreateEmpty(type: MediaObject.Type) : MediaObject {
+        return new MediaObject(type, 'Unnamed', null, null);
+    }
+
     thumbnail:string = null;
 }
 

@@ -3,6 +3,7 @@ import {MediaObject} from './MediaObject';
 //A MediaObject scheduled for playback
 export class ContentBlock {
     id:string;
+    colour:string = '#282482';
     media:MediaObject;
     mediaStatus: MediaObject.Status = MediaObject.Status.UNTRACKED;
     playbackConfig = new ContentPlaybackConfig();
