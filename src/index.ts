@@ -1,8 +1,5 @@
-import { WebsocketRequestHandler, WebsocketMethod } from "express-ws";
 import WebSocket = require("ws");
 import { ClientRequest } from "http";
-import { Stats } from "fs";
-import { Request, Response, request } from "express";
 import { BufferedWebVideo } from "./playback/BufferedWebVideo";
 import { MediaObject } from "./playback/MediaObject";
 import { Player } from "./playback/Player";
@@ -16,6 +13,7 @@ import { PlayerBasedEvent } from './events/UserEventTypes';
 import { ShowGraphicAction } from './events/UserEventActionTypes';
 import { UserEventManager } from "./events/UserEventManager";
 import { GraphicManager } from "./graphiclayers/GraphicManager";
+import { LocalDirectorySource, mediaObjectFromVideoFile } from './contentsources/LocalDirectorySource';
 
 const express = require('express');
 const app = express();
@@ -24,7 +22,6 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const colors = require('colors');
-const ffprobe = require('ffprobe'), ffprobeStatic = require('ffprobe-static');
 const uuidv4 = require('uuid/v4');
 
 //Find my local IP
@@ -264,69 +261,23 @@ const startUpPromise = Promise.resolve().then(() => {
 
     //Load sample videos
     const sampleDirectory = "C:/Users/pangp/Videos/YT Testing videos";
-    const sampleVideoPaths: string[] = [];
+    const sampleVideoSource = new LocalDirectorySource('Sample videos', sampleDirectory);
+    const numberOfSamples = 6;
+    let samplesFetched = 0;
 
-    fs.readdir(sampleDirectory, (err:Error, files:string[]) => {
-        if (!err) {
-            for (let filePath of files) {
-                if (supportedVideoExtensions.includes(path.extname(filePath))) {
-                    sampleVideoPaths.push(path.join(sampleDirectory, filePath));
-                }
+    const enqueueSamples = () => {
+        sampleVideoSource.poll(true).then((block) => {
+            rerunState.player.enqueueBlock(block);
+            samplesFetched = samplesFetched + 1;
+            if (samplesFetched < numberOfSamples) {
+                enqueueSamples();
             }
-            pushSampleVideos(6);
-        } else {
-            console.error('Failed to scan sample video folder', err);
-        }
-    });
-
-    function pushSampleVideos(videoCount: number) {
-        const availableVideos = Array.from(sampleVideoPaths);
-        const openPromises = [];
-        for (let i = 0; i < Math.min(videoCount, availableVideos.length); i++) {
-            let randomIndex = Math.round(Math.random() * (availableVideos.length - 1));
-            let videoPath = availableVideos[randomIndex];
-
-            availableVideos.splice(randomIndex, 1);
-
-            openPromises.push(mediaObjectFromVideoFile(videoPath).then((mediaObject) => {
-                let cb = new ContentBlock('sampleVid-' + i, mediaObject);
-                rerunState.player.enqueueBlock(cb);
-            }).catch((error) => console.error('Error while reading video file (' + videoPath +'): ', error)));
-        }
+        }).catch(error => console.error('Error while polling sample videos source:', error));
     }
 
+    enqueueSamples();
+
 });
-
-function mediaObjectFromVideoFile(filePath: string) : Promise<MediaObject> {
-    const location = new MediaObject.Location(MediaObject.Location.Type.LocalURL, filePath);
-
-    //Use ffProbe to find the video's duration
-    return new Promise((resolve, reject) => {
-        ffprobe(filePath, { path: ffprobeStatic.path }, (err:Error, info:any) => {
-            if (!err) {
-                let durationMs = null;
-                //Get the duration of the first video stream
-                for (let stream of info.streams) {
-                    if (stream.codec_type === 'video') {
-                        durationMs = stream.duration * 1000;
-                        break;
-                    }
-                }
-
-                if (durationMs == null) {
-                    reject('No video stream in file (' + filePath + ')');
-                    return;
-                }
-
-                let title = path.basename(filePath);
-                
-                resolve(new MediaObject(MediaObject.Type.LocalVideoFile, title, location, durationMs));
-            } else {
-                reject(err);
-            }
-        });
-    });
-}
 
 let cpRequestIDCounter = 0;
 function getReqID() : number {
