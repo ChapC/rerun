@@ -29,9 +29,12 @@
     "express-ws": "^4.0.0",
     "ffprobe": "^1.1.0",
     "ffprobe-static": "^3.0.0",
+    "googleapis": "^47.0.0",
     "jsdom": "^16.0.1",
+    "moment": "^2.24.0",
     "obs-websocket-js": "^4.0.0",
     "recursive-readdir": "^2.2.2",
-    "uuid": "^3.4.0"
+    "uuid": "^3.4.0",
+    "ytdl-core": "^1.0.7"
   }
 }

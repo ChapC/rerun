@@ -1,15 +1,6 @@
-import {MediaObject} from './MediaObject';
-import { OBSConnection } from '../OBSConnection';
-
-//Describes a renderer that can display certain content types
-export interface ContentRenderer {
-    loadMedia(media:MediaObject, useAltPath?:boolean) : Promise<void>; //Prepare the renderer for playback
-    unloadMedia() : Promise<void>; //Unload any loaded media
-    getLoadedMedia() : MediaObject; //Return the media object that's currently loaded
-
-    play() : Promise<void>;
-    restartMedia() : Promise<void>;
-}
+import { MediaObject } from '../MediaObject';
+import { OBSConnection } from '../../OBSConnection';
+import { ContentRenderer } from './ContentRenderer';
 
 class VLCPlaylistItem {
     hidden: boolean = false; selected: boolean = false; 
@@ -26,6 +17,7 @@ class VLCSettings {
         this.playlist = playlist;
     }
 }
+
 //Controls an OBS VLC source
 export class OBSVideoRenderer implements ContentRenderer {
     private obsVideoPlayer: OBSConnection.SourceInterface;
@@ -36,7 +28,7 @@ export class OBSVideoRenderer implements ContentRenderer {
     private currentMedia: MediaObject = null;
 
     loadMedia(media:MediaObject, useAltPath:boolean) : Promise<void> {
-        /* OBS needs to reload the block so that if the same video is playing it'll restart
+        /* OBS needs to always reload the block so that if the same video is playing it'll restart
         if (this.currentMedia != null && media.location.path === this.currentMedia.location.path) {
             return Promise.resolve(); //This media is already loaded
         }
@@ -96,44 +88,5 @@ export class OBSVideoRenderer implements ContentRenderer {
                 setTimeout(() => this.obsVideoPlayer.setVisible(true).then(resolve).catch(reject), 100); //OBS won't do it without a delay          
             });
         });
-    }
-}
-//Sends graphic events when media starts or stops. Used for title screens.
-export class RerunGraphicRenderer implements ContentRenderer {
-    private sendGraphicEvent: (event: string, forLayer: string) => void;
-    constructor(sendGraphicEvent: (event: string, forLayer: string) => void) {
-        this.sendGraphicEvent = sendGraphicEvent;
-    }
-
-    /*In this case, the media's location object path is the name of the target graphic layer
-    * On play, the renderer sends the 'in' event to the target layer.
-    * On unload, the renderer sends the 'out' event to the target layer.
-    */
-    currentGraphic : MediaObject;
-
-    loadMedia(media:MediaObject) : Promise<void> {
-        this.currentGraphic = media;
-        return Promise.resolve();
-    }
-
-    unloadMedia() : Promise<void> {
-        if (this.currentGraphic != null) { //Already unloaded
-            this.sendGraphicEvent('out', this.currentGraphic.location.path);
-            this.currentGraphic = null;
-        }
-        return Promise.resolve();
-    }
-
-    getLoadedMedia() : MediaObject {
-        return this.currentGraphic;
-    }
-
-    play() : Promise<void> {
-        this.sendGraphicEvent('in', this.currentGraphic.location.path);
-        return Promise.resolve();
-    }
-
-    restartMedia() : Promise<void> {
-        return this.play();
     }
 }

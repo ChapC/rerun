@@ -1,7 +1,8 @@
 import {ContentBlock} from './ContentBlock';
 import {MediaObject} from './MediaObject';
-import {ContentRenderer} from './ContentRenderers';
+import {ContentRenderer} from './renderers/ContentRenderer';
 import {MediaTypeRendererMap} from '../index';
+import {IntervalMillisCounter} from '../IntervalMillisCounter';
 const colors = require('colors');
 
 export class Player {
@@ -15,10 +16,50 @@ export class Player {
         this.setCurrentBlockNow(defaultBlock);
     }
 
+    private state : Player.PlaybackState = Player.PlaybackState.InBlock;
     //Currently-playing block
+    //Called every 100ms whenever playback time changes
+    private relTimeAlerted = -1;//Used so that relTime events are only fired once per second
+    private progressTimerTick = (newTimeMs:number) => {
+        this.progressMs = newTimeMs;
+
+        //Relative time events
+        let second = Math.floor(this.progressMs / 1000);
+        if (this.relTimeAlerted != second) { //Only fire this event once per second
+            this.relTimeAlerted = second;
+            this.fireEvent('relTime:start-' + second, null);
+            this.fireEvent('relTime:end-' + Math.floor((this.currentBlock.media.durationMs / 1000) - second), null);
+        }
+
+        if (this.progressMs >= this.currentBlock.media.durationMs) {
+            //The current content block is finished
+            this.progressCounter.stop();
+
+            //Check if there are any inbetween pauses set
+            if (Object.keys(this.requestedPauses).length !== 0) {
+                //Find the longest requested pause and use that
+                let longestPause = new Player.Pause('', 0);
+                for (let pause of Object.values(this.requestedPauses)) {
+                    if (longestPause.remainingSec < pause.remainingSec) {
+                        longestPause = pause;
+                    }
+                }
+
+                //Start the pause countdown
+                this.activePause = longestPause;
+                this.info('Starting inbetween pause (source=' + longestPause.source + ',length=' + longestPause.remainingSec + 's)');
+                this.fireEvent('paused', this.activePause);
+                this.attemptNextBlockPreload(true); //Force preload the next block (we can force b/c we know nothing is playing)
+                this.activePauseCounter.countDownFrom(this.activePause.remainingSec);
+            } else {
+                this.progressQueue(); //No pauses, progress immediately
+            }
+        }
+    }
+
     private currentBlock: ContentBlock = null;
     private progressMs:number = 0;
-    private currentBlockInterval:NodeJS.Timeout = null;
+    private progressCounter: IntervalMillisCounter = new IntervalMillisCounter(100, this.progressTimerTick);
 
     //Queued content blocks
     private queue: ContentBlock[] = [];
@@ -115,6 +156,7 @@ export class Player {
 
         //loadMedia will resolve immediately if the renderer already has this media ready
         targetRenderer.loadMedia(nextBlock.media).then(() => {
+            this.focusRenderer(targetRenderer);
             targetRenderer.play().then(() => {
                 this.startCurrentBlockTimer(nextBlock);
                 this.info('Started new ContentBlock "' + nextBlock.media.name + '"');                
@@ -122,7 +164,7 @@ export class Player {
             }).catch(error => this.error('Error while starting playback: ', error));
         }).catch(error => this.error('Error while loading media: ', error));
 
-        this.focusRenderer(targetRenderer);
+        this.setCurrentState(Player.PlaybackState.Loading);
     }
 
     //Immediately set and play the current content block. Does not affect the queue.
@@ -134,6 +176,7 @@ export class Player {
         }
 
         //Load the new block's media into its renderer
+        this.progressCounter.stop();
         let blockRenderer = this.rendererMap[newBlock.media.type].renderer;
         this.focusRenderer(blockRenderer, unloadDelayMs);
 
@@ -146,8 +189,11 @@ export class Player {
             blockRenderer.play().then(() => {
                 this.startCurrentBlockTimer(newBlock);
                 this.info('Set current block to "' + newBlock.media.name + '"');
+                this.attemptNextBlockPreload();
             }).catch(error => this.error('Error while starting playback: ', error));
         }).catch(error => this.error('Error while loading media: ', error));
+
+        this.setCurrentState(Player.PlaybackState.Loading);
     }
 
     goToDefaultBlock(unloadDelayMs:number = 0) {
@@ -166,78 +212,18 @@ export class Player {
         activeRenderer.restartMedia().then(() => this.startCurrentBlockTimer(this.currentBlock)).catch((error) => error('Error while restarting media: ', error));
     }
 
-    timerResolutionMs = 100;
-
     //Update the current block, start the block finished timer and fire event
     private startCurrentBlockTimer(newBlock:ContentBlock) {
         this.currentBlock = newBlock;
         this.progressMs = 0;
 
-        if (this.currentBlockInterval != null) {
-            clearInterval(this.currentBlockInterval);
-            this.currentBlockInterval = null;
-        }
-
         if (newBlock.media.durationMs != Number.POSITIVE_INFINITY) { //Some media types have an unknown duration (live streams, images)
             //TODO: Factor the content block's PlaybackConfig into this
             //Start the currentBlock timer
-            this.currentBlockInterval = setInterval(() => {
-
-                this.progressMs += this.timerResolutionMs;
-
-                //Relative time events
-                let second = this.progressMs - this.timerResolutionMs;
-                if (second % 1000 === 0) { //Only fire this event once per second
-                    this.fireEvent('relTime:start-' + second / 1000, null);
-                    this.fireEvent('relTime:end-' + Math.floor((this.currentBlock.media.durationMs - second) / 1000), null);
-                }
-
-                if (this.progressMs >= newBlock.media.durationMs) {
-                    //The current content block is finished
-                    clearInterval(this.currentBlockInterval);
-
-                    //Check if there are any inbetween pauses set
-                    if (Object.keys(this.requestedPauses).length !== 0) {
-                        //Find the longest requested pause and use that
-                        let longestPause = new Player.Pause('', 0);
-                        for (let pause of Object.values(this.requestedPauses)) {
-                            if (longestPause.remainingSec < pause.remainingSec) {
-                                longestPause = pause;
-                            }
-                        }
-
-                        //Start the pause countdown
-                        this.activePause = longestPause;
-                        this.info('Starting inbetween pause (source=' + longestPause.source + ',length=' + longestPause.remainingSec + 's)');
-                        this.fireEvent('paused', this.activePause);
-                        this.attemptNextBlockPreload(true); //Force preload the next block (we can force b/c we know nothing is playing)
-                        this.activePauseInterval = setInterval(() => {
-
-                            if (this.activePause == null) {
-                                //The pause has been cancelled
-                                this.clearPause();
-                                this.info('Inbetween pause cancelled');
-                                this.progressQueue();
-                                return;
-                            }
-
-                            this.activePause.remainingSec -= this.timerResolutionMs;
-
-                            if (this.activePause.remainingSec <= 0) {
-                                //The pause has finished
-                                this.clearPause();
-                                this.progressQueue();
-                            }
-
-                        }, this.timerResolutionMs);
-                    } else {
-                        this.progressQueue(); //No pauses, progress immediately
-                    }
-                }
-
-            }, this.timerResolutionMs);
+            this.progressCounter.start();
         }
 
+        this.setCurrentState(Player.PlaybackState.InBlock, false);
         this.fireEvent('newCurrentBlock', this.currentBlock);
     }
 
@@ -249,7 +235,9 @@ export class Player {
                 //Focus this renderer
                 r.focus();
             } else {
-                setTimeout(() => r.renderer.unloadMedia(), unloadDelayMs);
+                if (r.renderer.getLoadedMedia() != null) {
+                    setTimeout(() => r.renderer.unloadMedia(), unloadDelayMs);
+                }
             }
         }
     }
@@ -281,18 +269,43 @@ export class Player {
 
     }
 
+    private setCurrentState(newState : Player.PlaybackState, sendEvent: boolean = true) {
+        this.state = newState;
+        if (sendEvent) {
+            this.fireEvent('playbackStateChange', this.state);
+        }
+    }
+
     getState() : PlayerState {
-        return new PlayerState(this.currentBlock, this.progressMs, this.queue, this.activePause);
+        return new PlayerState(this.currentBlock, this.progressMs, this.queue, this.activePause, this.state);
     }
 
     //Inbetween pause - A pause can be specified that creates a delay in-between each ContentBlock
+    private pauseCounterTick = (newPauseTime:number) => {
+        if (this.activePause == null) {
+            //The pause has been cancelled
+            this.clearPause();
+            this.info('Inbetween pause cancelled');
+            this.progressQueue();
+            return;
+        }
+
+        this.activePause.remainingSec = newPauseTime;
+
+        if (this.activePause.remainingSec <= 0) {
+            //The pause has finished
+            this.clearPause();
+            this.progressQueue();
+        }
+    }
+
     private activePause: Player.Pause = null; //null means no pause active
-    private activePauseInterval : NodeJS.Timeout = null;
+    private activePauseCounter : IntervalMillisCounter = new IntervalMillisCounter(500, this.pauseCounterTick);
     private requestedPauses: {[id: number] : Player.Pause} = {}; //If multiple pause requests are active, the longest one is used
     private pauseIdCounter = 0;
 
     private clearPause() {
-        clearInterval(this.activePauseInterval);
+        this.activePauseCounter.stop();
         this.activePause = null;
     }
 
@@ -355,7 +368,7 @@ export class Player {
         delete this.listenerIdEventMap[listenerId];
     }
 
-    private fireEvent(eventName:string, eventData:object) {
+    private fireEvent(eventName:string, eventData:any) {
         let callbackList = this.eventListeners[eventName];
         if (callbackList != null) {
             for (let i = 0; i < callbackList.length; i++) {
@@ -382,8 +395,13 @@ export namespace Player {
     export class EventCallback {constructor(public id:number, public callback:((ev: object) => void)){}};
 
     export class Pause {id:number; constructor(public source: string, public remainingSec: number){}};
+
+    export enum PlaybackState {
+        InBlock = 'InBlock', Loading = 'Loading', Errored = 'Error'
+    }
 }
 
 export class PlayerState {
-    constructor(public currentBlock: ContentBlock, public progressMs: number, public queue:ContentBlock[], public pauseReason:Player.Pause) {}
+    constructor(public currentBlock: ContentBlock, public progressMs: number, public queue:ContentBlock[], 
+        public pauseReason:Player.Pause, public playbackState:Player.PlaybackState) {}
 }

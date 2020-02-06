@@ -2,6 +2,7 @@ import { ContentBlock } from "../playback/ContentBlock";
 
 //A source that can be polled for content blocks on demand
 export abstract class ContentSource {
+    id : string;
     constructor(public name: string) {}
 
     abstract poll(shuffle?:boolean) : Promise<ContentBlock>;

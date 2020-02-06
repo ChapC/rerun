@@ -3,7 +3,9 @@ import { ClientRequest } from "http";
 import { BufferedWebVideo } from "./playback/BufferedWebVideo";
 import { MediaObject } from "./playback/MediaObject";
 import { Player } from "./playback/Player";
-import { ContentRenderer, OBSVideoRenderer, RerunGraphicRenderer } from './playback/ContentRenderers';
+import { ContentRenderer } from './playback/renderers/ContentRenderer';
+import { OBSVideoRenderer } from './playback/renderers/OBSVideoRenderer';
+import { RerunGraphicRenderer } from './playback/renderers/RerunGraphicRenderer';
 import { ContentBlock } from "./playback/ContentBlock";
 import { ScheduleChange } from './playback/ScheduleChange';
 import { WebsocketHeartbeat } from './WebsocketHeartbeat';
@@ -14,6 +16,13 @@ import { ShowGraphicAction } from './events/UserEventActionTypes';
 import { UserEventManager } from "./events/UserEventManager";
 import { GraphicManager } from "./graphiclayers/GraphicManager";
 import { LocalDirectorySource, mediaObjectFromVideoFile } from './contentsources/LocalDirectorySource';
+import { ContentSourceManager } from "./contentsources/ContentSourceManager";
+import { VideoJSRenderer } from "./playback/renderers/videojs/VideoJSRenderer";
+import { Request, Response } from "express";
+import { PathLike } from "fs";
+import { getVideoMetadata } from './YoutubeAPI';
+import { Moment, Duration } from 'moment';
+import * as ytdl from 'ytdl-core';
 
 const express = require('express');
 const app = express();
@@ -23,6 +32,9 @@ const fs = require('fs');
 const os = require('os');
 const colors = require('colors');
 const uuidv4 = require('uuid/v4');
+const jsdom = require("jsdom");
+const { JSDOM } = jsdom;
+const moment = require('moment');
 
 //Find my local IP
 let localIP:string = null;
@@ -62,6 +74,7 @@ class RerunStateObject {
     obs: OBSStateObject; renderers: MediaTypeRendererMap = {} as MediaTypeRendererMap;
     graphicsManager: GraphicManager;
     connectedControlPanels: WebSocket[] = [];
+    contentSourceManager: ContentSourceManager;
     player: Player;
     userEventManager: UserEventManager;
 };
@@ -79,21 +92,21 @@ const startUpPromise = Promise.resolve().then(() => {
     return obsState.connection.connect(obsSocketAddress).catch(() => Promise.reject('Could not connect to OBS at ' + obsSocketAddress )).then(() => {
         return obsState.connection.getSourceInterface('rerun_localvideo', 'vlc_source').then((sourceInterface) => {
             if (sourceInterface == null) {
-                return Promise.reject("Couldn't find OBS source for local video playback (should be VLC source called 'rerun_localvideo'");
+                return Promise.reject("Couldn't find OBS source for local video playback (should be VLC source called 'rerun_localvideo')");
             }
             rerunState.obs.sources.localVideo = sourceInterface;
             return Promise.resolve();
         }).then(() => obsState.connection.getSourceInterface('rerun_webvideo', 'browser_source'))
         .then((sourceInterface) => {
             if (sourceInterface == null) {
-                return Promise.reject("Couldn't find OBS source for web video playback (should be browser source called 'rerun_webvideo'");
+                return Promise.reject("Couldn't find OBS source for web video playback (should be browser source called 'rerun_webvideo')");
             }
             rerunState.obs.sources.webVideo = sourceInterface;
             return Promise.resolve();
         }).then(() => obsState.connection.getSourceInterface('rerun_rtmp', 'ffmpeg_source'))
         .then((sourceInterface) => {
             if (sourceInterface == null) {
-                return Promise.reject("Couldn't find OBS source for RTMP stream playback (should be media source called 'rerun_rtmp'");
+                return Promise.reject("Couldn't find OBS source for RTMP stream playback (should be media source called 'rerun_rtmp')");
             }
             rerunState.obs.sources.rtmp = sourceInterface;
             return Promise.resolve();
@@ -140,6 +153,32 @@ const startUpPromise = Promise.resolve().then(() => {
         renderer: graphicTitleRenderer, focus: () => {} //Noop - the graphic renderer is on a user-defined OBS source, we don't control it
     };
 
+    //Web video renderer
+    const webVidRenderer = new VideoJSRenderer(rerunState.obs.sources.webVideo, );
+    rerunState.renderers[MediaObject.Type.YouTubeVideo] = {
+        renderer: webVidRenderer, focus: () => rerunState.obs.connection.moveSourceToTop(rerunState.obs.sources.webVideo)
+    };
+
+    //Open the websocket endpoint for VideoJS clients
+    app.ws('/vjssocket', function(ws:WebSocket, req:any) {
+        new WebsocketHeartbeat(ws);
+        let accepted = webVidRenderer.setVJSSocket(ws);
+        if (accepted) {
+            ws.on('close', () => webVidRenderer.clearVJSSocket());
+        } else {
+            ws.send('alreadyconnected');
+            ws.close();
+        }
+    });
+    //Serve the VideoJS webpage + static bits
+    const pathToWebpage = path.join(__dirname + '/playback/renderers/videojs/webpage/videojs.html');
+    const vjsPageWithIP = injectIPIntoHTML(pathToWebpage, localIP + ':8080');
+
+    app.use('/vjs', express.static(path.join(__dirname + '/playback/renderers/videojs/webpage'))); 
+    app.get('/vjs', function(req:Request, res:Response) {
+        res.send(vjsPageWithIP);
+    });   
+
 }).then(() => {
 
     console.info('[Startup] Creating player instance...');
@@ -158,6 +197,10 @@ const startUpPromise = Promise.resolve().then(() => {
     });
 
     rerunState.player.on('queueChange', (newQueue) => {
+        sendControlPanelAlert('setPlayerState', rerunState.player.getState());
+    });
+
+    rerunState.player.on('playbackStateChange', (newPlaybackState) => {
         sendControlPanelAlert('setPlayerState', rerunState.player.getState());
     });
 
@@ -196,6 +239,14 @@ const startUpPromise = Promise.resolve().then(() => {
     );
     rerunState.userEventManager.addEvent(lowerBarEvent);    
 
+
+}).then(() => {
+
+    console.info('[Startup] Loading content sources...');
+    rerunState.contentSourceManager = new ContentSourceManager();
+
+    const sampleDirectory = "C:/Users/pangp/Videos/YT Testing videos";
+    rerunState.contentSourceManager.addSource(new LocalDirectorySource('Sample videos', sampleDirectory));    
 
 }).then(() => {
 
@@ -258,22 +309,56 @@ const startUpPromise = Promise.resolve().then(() => {
 }).catch((error) => console.error(colors.red('Failed to start Rerun:'), error)).then(() => {
     //Startup finished
 
+    const ytSampleUrls = [
+        'https://www.youtube.com/watch?v=ktTurs7leRo', 'https://www.youtube.com/watch?v=4EYWACRQg_Q', 'https://www.youtube.com/watch?v=ML-jS6dmuBY',
+        'https://www.youtube.com/watch?v=SG6TPTBBz7g', 'https://www.youtube.com/watch?v=b_Ai0hTW6_M', 'https://www.youtube.com/watch?v=S79GcTt_8pc',
+        'https://www.youtube.com/watch?v=1B7hZ2AYyuU', 'https://www.youtube.com/watch?v=SGgMvp0Nm18', 'https://www.youtube.com/watch?v=2sGN3peODwY'
+    ];
 
     //Load sample videos
-    const sampleDirectory = "C:/Users/pangp/Videos/YT Testing videos";
-    const sampleVideoSource = new LocalDirectorySource('Sample videos', sampleDirectory);
     const numberOfSamples = 6;
     let samplesFetched = 0;
 
+    const shuffle = (a: any[]) => {
+        for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+        }
+        return a;
+    }
+
+    shuffle(ytSampleUrls);
+
+    //Youtube video samples
     const enqueueSamples = () => {
-        sampleVideoSource.poll(true).then((block) => {
+        const videoId = ytdl.getURLVideoID(ytSampleUrls[samplesFetched]) as string;
+        getVideoMetadata(videoId).then((metadata) => {
+            let duration : Duration = moment.duration(metadata.contentDetails.duration); //Duration is in ISO8601 format
+            let media = new MediaObject(
+                MediaObject.Type.YouTubeVideo, metadata.snippet.title, 
+                new MediaObject.Location(MediaObject.Location.Type.WebURL, ytSampleUrls[samplesFetched]),
+                duration.asMilliseconds()
+            );
+            media.thumbnail = metadata.snippet.thumbnails.default.url;
+            rerunState.player.enqueueBlock(new ContentBlock('ytSample' + samplesFetched, media));
+            samplesFetched += 1;
+            if (samplesFetched < numberOfSamples) {
+                enqueueSamples();
+            }
+        });
+    }
+
+    /*
+    //Local file samples
+    const enqueueSamples = () => {
+        rerunState.contentSourceManager.getSources()[0].poll(true).then((block) => {
             rerunState.player.enqueueBlock(block);
             samplesFetched = samplesFetched + 1;
             if (samplesFetched < numberOfSamples) {
                 enqueueSamples();
             }
         }).catch(error => console.error('Error while polling sample videos source:', error));
-    }
+    }*/
 
     enqueueSamples();
 
@@ -522,4 +607,20 @@ function createActionFromRequest(requestedAction: any) : UserEvent.Action {
         console.warn('Could not create UserEvent action for unsupported action type "' + requestedAction.type + '"');
         return requestedAction;
     }
+}
+
+function injectIPIntoHTML(pathToHTML:PathLike, ipAddress:string) : string {
+    let rawHTML = fs.readFileSync(pathToHTML);
+
+    //Load it into a virtual DOM so that we can modify it
+    let graphicDom = new JSDOM(rawHTML);
+    
+    let ipScriptTag = graphicDom.window.document.createElement("script");
+    ipScriptTag.innerHTML = "window.rerunAddress = '" + ipAddress + "';";
+    
+    //Add this script tag to <head> as the first child
+    let headTag = graphicDom.window.document.getElementsByTagName('head')[0];
+    headTag.insertBefore(ipScriptTag, headTag.firstChild);
+
+    return graphicDom.serialize();
 }
