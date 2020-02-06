@@ -15,7 +15,7 @@ export class VideoJSRenderer implements ContentRenderer {
     private currentMedia : MediaObject;
 
     loadMedia(media:MediaObject, useAltPath?:boolean) : Promise<void> {
-        if (this.currentMedia === media) {
+        if (this.currentMedia != null && this.currentMedia.location.path === media.location.path) {
             return Promise.resolve(); //This media is already loaded
         }
 
@@ -30,10 +30,9 @@ export class VideoJSRenderer implements ContentRenderer {
         });
     }
 
-    unloadMedia() : Promise<void> {
+    stop() : Promise<void> {
         return new Promise((resolve, reject) => {
             this.sendVJSRequest('pause').then(() => {
-                this.currentMedia = null;
                 resolve();
             }).catch(error => reject(error));
         });
@@ -44,7 +43,6 @@ export class VideoJSRenderer implements ContentRenderer {
     }
 
     play() : Promise<void> {
-        console.info('vjs play')
         return new Promise((resolve, reject) => {
             this.sendVJSRequest('play').then(() => {
                 resolve();

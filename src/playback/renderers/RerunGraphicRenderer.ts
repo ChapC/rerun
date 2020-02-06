@@ -19,8 +19,8 @@ export class RerunGraphicRenderer implements ContentRenderer {
         return Promise.resolve();
     }
 
-    unloadMedia() : Promise<void> {
-        if (this.currentGraphic != null) { //Already unloaded
+    stop() : Promise<void> {
+        if (this.currentGraphic != null) { //Already stopped
             this.sendGraphicEvent('out', this.currentGraphic.location.path);
             this.currentGraphic = null;
         }

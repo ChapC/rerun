@@ -53,15 +53,11 @@ export class OBSVideoRenderer implements ContentRenderer {
         });
     }
 
-    unloadMedia() : Promise<void> {
+    stop() : Promise<void> {
         return new Promise((resolve, reject) => {
             //Set the source as invisible (stops playback)
             this.obsVideoPlayer.setVisible(false).then(() => {
-                //Clear the playlist
-                this.obsVideoPlayer.setSettings(new VLCSettings([])).then(() => {
-                    this.currentMedia = null;
-                    resolve();
-                }).catch(reject);
+                resolve();
             }).catch(reject);
         });
     }

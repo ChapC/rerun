@@ -1,6 +1,5 @@
 import WebSocket = require("ws");
 import { ClientRequest } from "http";
-import { BufferedWebVideo } from "./playback/BufferedWebVideo";
 import { MediaObject } from "./playback/MediaObject";
 import { Player } from "./playback/Player";
 import { ContentRenderer } from './playback/renderers/ContentRenderer';
@@ -142,7 +141,7 @@ const startUpPromise = Promise.resolve().then(() => {
     //Local video renderer
     const localVidRenderer = new OBSVideoRenderer(rerunState.obs.sources.localVideo);
     //Ensure the OBS source is disactivated to start with
-    localVidRenderer.unloadMedia();
+    localVidRenderer.stop();
     rerunState.renderers[MediaObject.Type.LocalVideoFile] = {
         renderer: localVidRenderer, focus: () => rerunState.obs.connection.moveSourceToTop(rerunState.obs.sources.localVideo)
     };
@@ -182,8 +181,6 @@ const startUpPromise = Promise.resolve().then(() => {
 }).then(() => {
 
     console.info('[Startup] Creating player instance...');
-
-    const openWebVideoBuffers: {[sourceUrl: string] : BufferedWebVideo} = {};
 
     //Use the title screen graphic as the default block (when nothing else is available)
     const titleScreenGraphicName = 'Title screen';
@@ -329,6 +326,7 @@ const startUpPromise = Promise.resolve().then(() => {
 
     shuffle(ytSampleUrls);
 
+    
     //Youtube video samples
     const enqueueSamples = () => {
         const videoId = ytdl.getURLVideoID(ytSampleUrls[samplesFetched]) as string;

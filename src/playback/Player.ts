@@ -178,7 +178,6 @@ export class Player {
         //Load the new block's media into its renderer
         this.progressCounter.stop();
         let blockRenderer = this.rendererMap[newBlock.media.type].renderer;
-        this.focusRenderer(blockRenderer, unloadDelayMs);
 
         if (blockRenderer == null) {
             this.warn('No compatible renderer for media type ' + newBlock.media.type);
@@ -189,7 +188,7 @@ export class Player {
             blockRenderer.play().then(() => {
                 this.startCurrentBlockTimer(newBlock);
                 this.info('Set current block to "' + newBlock.media.name + '"');
-                this.attemptNextBlockPreload();
+                this.focusRenderer(blockRenderer, unloadDelayMs).then(() => this.attemptNextBlockPreload());
             }).catch(error => this.error('Error while starting playback: ', error));
         }).catch(error => this.error('Error while loading media: ', error));
 
@@ -228,18 +227,22 @@ export class Player {
     }
 
     //Bring the target renderer into focus
-    private focusRenderer(targetRenderer:ContentRenderer, unloadDelayMs:number = 0) {
-        //Focus target, unload all other rendererMap
-        for (let r of Object.values(this.rendererMap)) {
-            if (r.renderer === targetRenderer) {
-                //Focus this renderer
-                r.focus();
-            } else {
-                if (r.renderer.getLoadedMedia() != null) {
-                    setTimeout(() => r.renderer.unloadMedia(), unloadDelayMs);
+    private focusRenderer(targetRenderer:ContentRenderer, unloadDelayMs:number = 0) : Promise<void> {
+        return new Promise((resolve, reject) => {
+            //Focus target, stop all other rendererMap
+            for (let r of Object.values(this.rendererMap)) {
+                if (r.renderer === targetRenderer) {
+                    //Focus this renderer
+                    r.focus();
+                } else {
+                    if (r.renderer.getLoadedMedia() != null) {
+                        setTimeout(() => r.renderer.stop(), unloadDelayMs);
+                    }
                 }
             }
-        }
+
+            setTimeout(resolve, unloadDelayMs);
+        });
     }
 
     //Load the next block into its renderer. This will only happen if the next block uses a different renderer than the current.
@@ -259,7 +262,7 @@ export class Player {
 
         if (targetRenderer.getLoadedMedia() != null) {
             //If the renderer already has media loaded, unload it first
-            targetRenderer.unloadMedia().then(() => {
+            targetRenderer.stop().then(() => {
                 targetRenderer.loadMedia(nextBlock.media).catch(error => error('Failed to load next block into renderer: ', error));
             }).catch(error => error('Failed to load next block into renderer: Error while unloading current block - ', error));
         } else {
