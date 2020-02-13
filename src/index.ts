@@ -21,7 +21,9 @@ import { Request, Response } from "express";
 import { PathLike } from "fs";
 import { getVideoMetadata } from './YoutubeAPI';
 import { Moment, Duration } from 'moment';
-import * as ytdl from 'ytdl-core';
+import { WebVideoDownloader } from './WebVideoDownloader';
+import { LocalFileLocation, WebStreamLocation, WebBufferLocation, GraphicsLayerLocation } from './playback/MediaLocations'
+import { URLSearchParams } from "url";
 
 const express = require('express');
 const app = express();
@@ -64,14 +66,16 @@ type OBSSourceMap = {
     localVideo: OBSConnection.SourceInterface, webVideo: OBSConnection.SourceInterface,
     rtmp: OBSConnection.SourceInterface
 };
+
 class OBSStateObject {
     connection: OBSConnection; 
     sources: OBSSourceMap = {} as OBSSourceMap;
 };
-export type MediaTypeRendererMap = {[mediaType in MediaObject.Type] : {renderer: ContentRenderer, focus: Function}};
+export type ContentTypeRendererMap = {[contentType in MediaObject.ContentType] : {renderer: ContentRenderer, focus: Function}};
 class RerunStateObject {
-    obs: OBSStateObject; renderers: MediaTypeRendererMap = {} as MediaTypeRendererMap;
+    obs: OBSStateObject; renderers: ContentTypeRendererMap = {} as ContentTypeRendererMap;
     graphicsManager: GraphicManager;
+    downloadBuffer: WebVideoDownloader;
     connectedControlPanels: WebSocket[] = [];
     contentSourceManager: ContentSourceManager;
     player: Player;
@@ -142,19 +146,19 @@ const startUpPromise = Promise.resolve().then(() => {
     const localVidRenderer = new OBSVideoRenderer(rerunState.obs.sources.localVideo);
     //Ensure the OBS source is disactivated to start with
     localVidRenderer.stop();
-    rerunState.renderers[MediaObject.Type.LocalVideoFile] = {
+    rerunState.renderers[MediaObject.ContentType.LocalFile] = {
         renderer: localVidRenderer, focus: () => rerunState.obs.connection.moveSourceToTop(rerunState.obs.sources.localVideo)
     };
 
     //Graphic title renderer
     const graphicTitleRenderer = new RerunGraphicRenderer(rerunState.graphicsManager.sendGraphicEvent);
-    rerunState.renderers[MediaObject.Type.RerunTitle] = {
+    rerunState.renderers[MediaObject.ContentType.GraphicsLayer] = {
         renderer: graphicTitleRenderer, focus: () => {} //Noop - the graphic renderer is on a user-defined OBS source, we don't control it
     };
 
     //Web video renderer
     const webVidRenderer = new VideoJSRenderer(rerunState.obs.sources.webVideo, );
-    rerunState.renderers[MediaObject.Type.YouTubeVideo] = {
+    rerunState.renderers[MediaObject.ContentType.WebStream] = {
         renderer: webVidRenderer, focus: () => rerunState.obs.connection.moveSourceToTop(rerunState.obs.sources.webVideo)
     };
 
@@ -184,8 +188,8 @@ const startUpPromise = Promise.resolve().then(() => {
 
     //Use the title screen graphic as the default block (when nothing else is available)
     const titleScreenGraphicName = 'Title screen';
-    const titleScreenGraphicLocation = new MediaObject.Location(MediaObject.Location.Type.LocalURL, 'FHTV title slate');
-    const titleBlock = new ContentBlock('titleBlock', new MediaObject(MediaObject.Type.RerunTitle, titleScreenGraphicName, titleScreenGraphicLocation, Number.POSITIVE_INFINITY));
+    const titleScreenGraphicLocation = new GraphicsLayerLocation('FHTV title slate');
+    const titleBlock = new ContentBlock('titleBlock', new MediaObject(MediaObject.MediaType.RerunTitle, titleScreenGraphicName, titleScreenGraphicLocation, Number.POSITIVE_INFINITY));
 
     rerunState.player = new Player(rerunState.renderers, titleBlock);
 
@@ -202,6 +206,22 @@ const startUpPromise = Promise.resolve().then(() => {
     });
 
     rerunState.player.on('paused', (pauseReason) => sendControlPanelAlert('setPlayerState', rerunState.player.getState()));
+
+}).then(() => {
+
+    console.info('[Startup] Creating download buffer...');
+    rerunState.downloadBuffer = new WebVideoDownloader(path.join(__dirname + '/../temp'));
+
+    const itemsToPreload = 3;
+
+    rerunState.player.on('queueChange', (newQueue : ContentBlock[]) => {
+        for (let i = 0; i < Math.min(itemsToPreload, newQueue.length); i++) {
+            let block = newQueue[i];
+            if (block.media.location instanceof WebBufferLocation) {
+                rerunState.downloadBuffer.getJobFromLocation(block.media.location).start();
+            }
+        }
+    });
 
 }).then(() => {
 
@@ -326,15 +346,15 @@ const startUpPromise = Promise.resolve().then(() => {
 
     shuffle(ytSampleUrls);
 
-    
     //Youtube video samples
     const enqueueSamples = () => {
-        const videoId = ytdl.getURLVideoID(ytSampleUrls[samplesFetched]) as string;
+        const url = ytSampleUrls[samplesFetched];
+        const videoId = new URLSearchParams(url.split('?')[1]).get('v');
         getVideoMetadata(videoId).then((metadata) => {
             let duration : Duration = moment.duration(metadata.contentDetails.duration); //Duration is in ISO8601 format
             let media = new MediaObject(
-                MediaObject.Type.YouTubeVideo, metadata.snippet.title, 
-                new MediaObject.Location(MediaObject.Location.Type.WebURL, ytSampleUrls[samplesFetched]),
+                MediaObject.MediaType.YouTubeVideo, metadata.snippet.title, 
+                rerunState.downloadBuffer.bufferYoutubeVideo(ytSampleUrls[samplesFetched]),
                 duration.asMilliseconds()
             );
             media.thumbnail = metadata.snippet.thumbnails.default.url;
@@ -359,7 +379,6 @@ const startUpPromise = Promise.resolve().then(() => {
     }*/
 
     enqueueSamples();
-
 });
 
 let cpRequestIDCounter = 0;

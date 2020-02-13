@@ -1,15 +1,15 @@
 import {ContentBlock} from './ContentBlock';
 import {MediaObject} from './MediaObject';
 import {ContentRenderer} from './renderers/ContentRenderer';
-import {MediaTypeRendererMap} from '../index';
+import {ContentTypeRendererMap} from '../index';
 import {IntervalMillisCounter} from '../IntervalMillisCounter';
 const colors = require('colors');
 
 export class Player {
-    private rendererMap: MediaTypeRendererMap;
+    private rendererMap: ContentTypeRendererMap;
     private defaultBlock: ContentBlock;
 
-    constructor(rendererMap: MediaTypeRendererMap, defaultBlock: ContentBlock) {
+    constructor(rendererMap: ContentTypeRendererMap, defaultBlock: ContentBlock) {
         this.rendererMap = rendererMap;
         this.defaultBlock = defaultBlock;
 
@@ -152,7 +152,7 @@ export class Player {
 
         this.info('Progressing to next queued ContentBlock...');
 
-        let targetRenderer = this.rendererMap[nextBlock.media.type].renderer;
+        let targetRenderer = this.rendererMap[nextBlock.media.location.getType()].renderer;
 
         //loadMedia will resolve immediately if the renderer already has this media ready
         targetRenderer.loadMedia(nextBlock.media).then(() => {
@@ -177,7 +177,7 @@ export class Player {
 
         //Load the new block's media into its renderer
         this.progressCounter.stop();
-        let blockRenderer = this.rendererMap[newBlock.media.type].renderer;
+        let blockRenderer = this.rendererMap[newBlock.media.location.getType()].renderer;
 
         if (blockRenderer == null) {
             this.warn('No compatible renderer for media type ' + newBlock.media.type);
@@ -207,7 +207,7 @@ export class Player {
         }
 
         this.info('Restarting current block');
-        let activeRenderer = this.rendererMap[this.currentBlock.media.type].renderer;
+        let activeRenderer = this.rendererMap[this.currentBlock.media.location.getType()].renderer;
         activeRenderer.restartMedia().then(() => this.startCurrentBlockTimer(this.currentBlock)).catch((error) => error('Error while restarting media: ', error));
     }
 
@@ -258,7 +258,7 @@ export class Player {
             return;
         }
         this.info('Preloading the next block (' + nextBlock.media.name + ')');
-        let targetRenderer = this.rendererMap[nextBlock.media.type].renderer;
+        let targetRenderer = this.rendererMap[nextBlock.media.location.getType()].renderer;
 
         if (targetRenderer.getLoadedMedia() != null) {
             //If the renderer already has media loaded, unload it first
@@ -338,7 +338,7 @@ export class Player {
     private listenerIdEventMap : {[id: number] : string} = {}; //Maps listenerID to the event it's listening for
     private eventListeners: {[event: string] : Player.EventCallback[]} = {}; //Maps eventName to a list of registered callbacks
 
-    on(eventName:string, callback:(ev: object) => void) : number {
+    on(eventName:string, callback:(ev: any) => void) : number {
         let listenerId = this.listenerIdCounter++;
         this.listenerIdEventMap[listenerId] = eventName;
 

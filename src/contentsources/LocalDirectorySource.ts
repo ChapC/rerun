@@ -2,6 +2,7 @@ import { ContentBlock } from "../playback/ContentBlock";
 import { ContentSource } from './ContentSource';
 import { MediaObject } from '../playback/MediaObject';
 import { Stack } from '../Stack';
+import { LocalFileLocation } from '../playback/MediaLocations';
 const ffprobe = require('ffprobe'), ffprobeStatic = require('ffprobe-static');
 const path = require('path');
 const fs = require('fs');
@@ -34,7 +35,7 @@ export class LocalDirectorySource extends ContentSource {
 
                     mediaObjectFromVideoFile(availableVideos[randomIndex]).then((mediaObject) => {
                         let contentBlock = new ContentBlock(uuidv4(), mediaObject);
-                        this.recentVideoPaths.push(contentBlock.media.location.path);
+                        this.recentVideoPaths.push(contentBlock.media.location.getPath());
                         resolve(contentBlock);
                     }).catch(error => reject(error));                    
                 } else {
@@ -98,7 +99,7 @@ export class LocalDirectorySource extends ContentSource {
 }
 
 export function mediaObjectFromVideoFile(filePath: string) : Promise<MediaObject> {
-    const location = new MediaObject.Location(MediaObject.Location.Type.LocalURL, filePath);
+    const location = new LocalFileLocation(filePath);
 
     //Use ffProbe to find the video's duration
     return new Promise((resolve, reject) => {
@@ -121,7 +122,7 @@ export function mediaObjectFromVideoFile(filePath: string) : Promise<MediaObject
                 let baseFileName = path.basename(filePath); //Remove the file extension from the title
                 let title = baseFileName.substring(0, (baseFileName.length - path.extname(filePath).length));
                 
-                resolve(new MediaObject(MediaObject.Type.LocalVideoFile, title, location, durationMs));
+                resolve(new MediaObject(MediaObject.MediaType.LocalVideoFile, title, location, durationMs));
             } else {
                 reject(err);
             }

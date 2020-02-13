@@ -109,8 +109,8 @@ export class GraphicManager {
 
         //Check if a rerun graphic is currently playing and, if so, send the start event now
         const currentBlock = this.fetchPlayerState().currentBlock;
-        if (currentBlock.media.type === MediaObject.Type.RerunTitle) {
-            this.sendGraphicEvent('in', currentBlock.media.location.path, socket);
+        if (currentBlock.media.type === MediaObject.MediaType.RerunTitle) {
+            this.sendGraphicEvent('in', currentBlock.media.location.getPath(), socket);
         }
     }
 

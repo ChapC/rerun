@@ -2,17 +2,17 @@
 export class MediaObject {
     name:string;
     location:MediaObject.Location
-    type: MediaObject.Type;
+    type: MediaObject.MediaType;
     durationMs: number;
 
-    constructor(type: MediaObject.Type, name:string, location:MediaObject.Location, durationMs: number) {
+    constructor(type: MediaObject.MediaType, name:string, location:MediaObject.Location, durationMs: number) {
         this.type = type;
         this.name = name;
         this.location = location;
         this.durationMs = durationMs;
     }
 
-    static CreateEmpty(type: MediaObject.Type) : MediaObject {
+    static CreateEmpty(type: MediaObject.MediaType) : MediaObject {
         return new MediaObject(type, 'Unnamed', null, null);
     }
 
@@ -22,23 +22,29 @@ export class MediaObject {
 export namespace MediaObject {
     export enum Status { READY = 'Ready', PENDING = 'Pending', OFFLINE = 'Offline', UNTRACKED = 'Untracked' };
 
-    export enum Type {
+    export enum MediaType {
         LocalVideoFile = 'Local video file',
         YouTubeVideo = 'Youtube video',
         RTMPStream = 'RTMP stream',
         RerunTitle = 'Rerun title graphic'
     }
 
-    export class Location {
-        type: Location.Type;
-        constructor(type: Location.Type, public path:string, public altPath?:string) {
-            this.type = type;
-        }
+    export enum ContentType {
+        LocalFile = 'LocalFile',
+        WebStream = 'WebStream',
+        RTMP = 'RTMP',
+        GraphicsLayer = 'GraphicsLayer'
     }
 
-    export namespace Location {
-        export enum Type { //NOTE: I think the download buffer could be implemnented by changing location path to a getPath() function and making Location an interface (BasicLocation, BufferedDownloadLoation)
-            WebURL = "Web stream", LocalURL = "On disk", BufferedVideo = "Download buffer"
+    export abstract class Location {
+        abstract getType() : ContentType;
+        abstract getPath() : string;
+        abstract getStatus() : MediaObject.Status; //Is the MediaObject available right now?
+
+        toJSON() : any {
+            return {
+                contentType: this.getType(), path: this.getPath()
+            };
         }
     }
 }

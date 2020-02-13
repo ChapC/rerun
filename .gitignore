@@ -1,5 +1,7 @@
 #Graphics packages
 graphics/
+#Temporary downloads
+temp/
 
 build
 

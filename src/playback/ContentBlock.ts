@@ -12,6 +12,13 @@ export class ContentBlock {
         this.id = id;
         this.media = media;
     }
+
+    toJSON() : any {
+        return {
+            id: this.id, colour: this.colour, media: this.media, 
+            mediaStatus: this.media.location.getStatus(), playbackConfig: this.playbackConfig
+        }
+    }
 }
 
 export class ContentPlaybackConfig {

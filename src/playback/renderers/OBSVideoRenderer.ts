@@ -27,18 +27,14 @@ export class OBSVideoRenderer implements ContentRenderer {
 
     private currentMedia: MediaObject = null;
 
-    loadMedia(media:MediaObject, useAltPath:boolean) : Promise<void> {
+    loadMedia(media:MediaObject) : Promise<void> {
         /* OBS needs to always reload the block so that if the same video is playing it'll restart
         if (this.currentMedia != null && media.location.path === this.currentMedia.location.path) {
             return Promise.resolve(); //This media is already loaded
         }
         */
 
-        let playlistItem = new VLCPlaylistItem(media.location.path);
-
-        if (useAltPath) {
-            playlistItem = new VLCPlaylistItem(media.location.altPath);
-        }
+        let playlistItem = new VLCPlaylistItem(media.location.getPath());
 
         return new Promise((resolve, reject) => {
             //Set the source as invisible (stops playback)

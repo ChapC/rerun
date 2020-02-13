@@ -21,7 +21,7 @@ export class RerunGraphicRenderer implements ContentRenderer {
 
     stop() : Promise<void> {
         if (this.currentGraphic != null) { //Already stopped
-            this.sendGraphicEvent('out', this.currentGraphic.location.path);
+            this.sendGraphicEvent('out', this.currentGraphic.location.getPath());
             this.currentGraphic = null;
         }
         return Promise.resolve();
@@ -32,7 +32,7 @@ export class RerunGraphicRenderer implements ContentRenderer {
     }
 
     play() : Promise<void> {
-        this.sendGraphicEvent('in', this.currentGraphic.location.path);
+        this.sendGraphicEvent('in', this.currentGraphic.location.getPath());
         return Promise.resolve();
     }
 

@@ -14,8 +14,8 @@ export class VideoJSRenderer implements ContentRenderer {
     //This renderer internally maintains a playback state so that if a VJS client connects during playback it will be updated
     private currentMedia : MediaObject;
 
-    loadMedia(media:MediaObject, useAltPath?:boolean) : Promise<void> {
-        if (this.currentMedia != null && this.currentMedia.location.path === media.location.path) {
+    loadMedia(media:MediaObject) : Promise<void> {
+        if (this.currentMedia != null && this.currentMedia.location.getPath() === media.location.getPath()) {
             return Promise.resolve(); //This media is already loaded
         }
 
@@ -143,8 +143,8 @@ class VJSSource {
     src: string;
 
     constructor(sourceMedia: MediaObject) {
-        this.src = sourceMedia.location.path;
-        if (sourceMedia.type === MediaObject.Type.YouTubeVideo) {
+        this.src = sourceMedia.location.getPath();
+        if (sourceMedia.type === MediaObject.MediaType.YouTubeVideo) {
             this.type = 'video/youtube';
         } else {
             this.type = 'video/mp4';
