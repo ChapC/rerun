@@ -1,16 +1,17 @@
-import { PathLike, existsSync, accessSync, constants as FSConstants, createWriteStream, WriteStream, fstat } from "fs";
+import { PathLike, existsSync, accessSync, constants as FSConstants, createWriteStream, WriteStream, fstat, readdir, unlink, unlinkSync } from "fs";
 import ytdl from 'ytdl-core';
 import { WebBufferLocation } from "./playback/MediaLocations";
 import { Readable } from "stream";
 import { URLSearchParams } from "url";
 import FfmpegCommand, { setFfmpegPath } from "fluent-ffmpeg";
+import path from 'path';
 const ffmpegStatic = require('ffmpeg-static');
 const uuidv4 = require('uuid/v4');
 
 //Handles downloads and manages the on-disk buffer
 export class WebVideoDownloader {
-    private bufferDirectory : PathLike;
-    constructor(bufferDirectory:PathLike) {
+    private bufferDirectory : string;
+    constructor(bufferDirectory:string) {
         this.bufferDirectory = bufferDirectory;
         if (!existsSync(bufferDirectory)) {
             throw new Error("Buffer directory '" + bufferDirectory + "' does not exist");
@@ -51,13 +52,47 @@ export class WebVideoDownloader {
         let jobId = this.pathJobIdMap[location.getLocalPath()];
         return this.activeJobs[jobId];
     }
+
+    cleanBuffer(filesToKeep?: string[]) : Promise<number> {
+        //Remove all the in-progress downloads from the buffer
+        return new Promise((resolve, reject) => {
+            //Find all the files in the buffer directory
+            let deletedFiles = 0;
+            readdir(this.bufferDirectory, (error, fileNames) => {
+                if (!error) {
+                    fileNames.forEach(filePath => {
+                        if (filesToKeep != null && filePath in filesToKeep) {
+                            return;
+                        }
+
+                        //Keep the combined files (start with b-)
+                        if (filePath.slice(0,2) === 'b-') {
+                            return;
+                        }
+                        
+                        //Delete the file
+                        try {
+                            unlinkSync(path.join(this.bufferDirectory, filePath));
+                            deletedFiles++;
+                        } catch (error) {
+                            console.error("Failed to delete file from download buffer", error);
+                        }
+                    });
+
+                    resolve(deletedFiles);
+                } else {
+                    reject(error);
+                }
+            });
+        });
+    }
     
     bufferYoutubeVideo(url: string) : WebBufferLocation {
         //Youtube often only includes audio in streams up to 360p, so hd video streams don't have audio
         //To create a video file with both, the highest quality audio stream must be combined with the highest quality video stream
 
         const videoId = new URLSearchParams(url.split('?')[1]).get('v');
-        const finalPath = this.bufferDirectory + '/b-' + videoId + '.mp4';
+        const finalPath = path.join(this.bufferDirectory, 'b-' + videoId + '.mp4');
 
         //Check if a job for this video is already active
         let existingJob = this.activeJobs[videoId];
@@ -78,7 +113,7 @@ export class WebVideoDownloader {
         const vDownloadOpts = new YoutubeDownloadOptions(
             url, 
             { quality: 'highestvideo', filter: 'videoonly' }, 
-            this.bufferDirectory + '/' + vDlJobId + '.mp4'
+            path.join(this.bufferDirectory, vDlJobId + '.mp4')
         );
         const videoJob = new WebVideoDownloader.YoutubeJob(vDlJobId, vDownloadOpts);
 
@@ -87,7 +122,7 @@ export class WebVideoDownloader {
         const aDownloadOpts = new YoutubeDownloadOptions(
             url, 
             { quality: 'highestaudio', filter: 'audioonly' },
-            this.bufferDirectory + '/' + aDlJobId + '.m4v'
+            path.join(this.bufferDirectory, aDlJobId + '.m4v')
         );
         const audioJob = new WebVideoDownloader.YoutubeJob(aDlJobId, aDownloadOpts);
 
@@ -156,7 +191,7 @@ export namespace WebVideoDownloader {
 
             this.vFileStream = createWriteStream(this.options.writeStreamPath, {mode: FSConstants.O_CREAT});
             this.vFileStream.on('error', (error) => {
-                throw new Error("Couldn't create write stream " + error);
+                console.error("[YoutubeJob] Couldn't start download for " + this.options.url, error);
             });
 
             this.vDlStream = ytdl(this.options.url, this.options.downloadOptions);

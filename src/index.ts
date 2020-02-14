@@ -211,6 +211,8 @@ const startUpPromise = Promise.resolve().then(() => {
 
     console.info('[Startup] Creating download buffer...');
     rerunState.downloadBuffer = new WebVideoDownloader(path.join(__dirname + '/../temp'));
+    rerunState.downloadBuffer.cleanBuffer().then((n) => console.info('Cleaned ' + n + ' files from download buffer'))
+    .catch((error) => console.error('Failed to clean download buffer', error));
 
     const itemsToPreload = 3;
 
@@ -255,7 +257,6 @@ const startUpPromise = Promise.resolve().then(() => {
         new ShowGraphicAction('Up next bar', rerunState.graphicsManager.sendGraphicEvent), 3000
     );
     rerunState.userEventManager.addEvent(lowerBarEvent);    
-
 
 }).then(() => {
 
@@ -346,19 +347,25 @@ const startUpPromise = Promise.resolve().then(() => {
 
     shuffle(ytSampleUrls);
 
+    /*
     //Youtube video samples
     const enqueueSamples = () => {
         const url = ytSampleUrls[samplesFetched];
         const videoId = new URLSearchParams(url.split('?')[1]).get('v');
         getVideoMetadata(videoId).then((metadata) => {
             let duration : Duration = moment.duration(metadata.contentDetails.duration); //Duration is in ISO8601 format
-            let media = new MediaObject(
-                MediaObject.MediaType.YouTubeVideo, metadata.snippet.title, 
-                rerunState.downloadBuffer.bufferYoutubeVideo(ytSampleUrls[samplesFetched]),
-                duration.asMilliseconds()
-            );
-            media.thumbnail = metadata.snippet.thumbnails.default.url;
-            rerunState.player.enqueueBlock(new ContentBlock('ytSample' + samplesFetched, media));
+            try {
+                let media = new MediaObject(
+                    MediaObject.MediaType.YouTubeVideo, metadata.snippet.title, 
+                    rerunState.downloadBuffer.bufferYoutubeVideo(ytSampleUrls[samplesFetched]),
+                    duration.asMilliseconds()
+                );
+                media.thumbnail = metadata.snippet.thumbnails.default.url;
+                rerunState.player.enqueueBlock(new ContentBlock('ytSample' + samplesFetched, media));
+            } catch (error) {
+                console.error("Couldn't create Youtube MediaObject", error);
+            }
+
             samplesFetched += 1;
             if (samplesFetched < numberOfSamples) {
                 enqueueSamples();
@@ -378,7 +385,7 @@ const startUpPromise = Promise.resolve().then(() => {
         }).catch(error => console.error('Error while polling sample videos source:', error));
     }*/
 
-    enqueueSamples();
+    //enqueueSamples();
 });
 
 let cpRequestIDCounter = 0;
