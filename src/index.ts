@@ -6,24 +6,20 @@ import { ContentRenderer } from './playback/renderers/ContentRenderer';
 import { OBSVideoRenderer } from './playback/renderers/OBSVideoRenderer';
 import { RerunGraphicRenderer } from './playback/renderers/RerunGraphicRenderer';
 import { ContentBlock } from "./playback/ContentBlock";
-import { ScheduleChange } from './playback/ScheduleChange';
-import { WebsocketHeartbeat } from './WebsocketHeartbeat';
+import { WebsocketHeartbeat } from './helpers/WebsocketHeartbeat';
 import { OBSConnection } from './OBSConnection';
-import { UserEvent } from './events/UserEvent';
 import { PlayerBasedEvent } from './events/UserEventTypes';
 import { ShowGraphicAction } from './events/UserEventActionTypes';
 import { UserEventManager } from "./events/UserEventManager";
 import { GraphicManager } from "./graphiclayers/GraphicManager";
-import { LocalDirectorySource, mediaObjectFromVideoFile } from './contentsources/LocalDirectorySource';
+import { LocalDirectorySource } from './contentsources/LocalDirectorySource';
 import { ContentSourceManager } from "./contentsources/ContentSourceManager";
 import { VideoJSRenderer } from "./playback/renderers/videojs/VideoJSRenderer";
 import { Request, Response } from "express";
 import { PathLike } from "fs";
-import { getVideoMetadata } from './YoutubeAPI';
-import { Moment, Duration } from 'moment';
 import { WebVideoDownloader } from './WebVideoDownloader';
-import { LocalFileLocation, WebStreamLocation, WebBufferLocation, GraphicsLayerLocation } from './playback/MediaLocations'
-import { URLSearchParams } from "url";
+import ControlPanelHandler from './ControlPanelHandler';
+import { GraphicsLayerLocation, WebBufferLocation } from './playback/MediaLocations';
 
 const express = require('express');
 const app = express();
@@ -32,7 +28,6 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const colors = require('colors');
-const uuidv4 = require('uuid/v4');
 const jsdom = require("jsdom");
 const { JSDOM } = jsdom;
 const moment = require('moment');
@@ -71,17 +66,19 @@ class OBSStateObject {
     connection: OBSConnection; 
     sources: OBSSourceMap = {} as OBSSourceMap;
 };
+
 export type ContentTypeRendererMap = {[contentType in MediaObject.ContentType] : {renderer: ContentRenderer, focus: Function}};
-class RerunStateObject {
+export class RerunStateObject {
     obs: OBSStateObject; renderers: ContentTypeRendererMap = {} as ContentTypeRendererMap;
     graphicsManager: GraphicManager;
     downloadBuffer: WebVideoDownloader;
-    connectedControlPanels: WebSocket[] = [];
+    controlPanelHandler : ControlPanelHandler;
     contentSourceManager: ContentSourceManager;
     player: Player;
     userEventManager: UserEventManager;
 };
-let rerunState = new RerunStateObject();
+const rerunState = new RerunStateObject();
+rerunState.controlPanelHandler = new ControlPanelHandler(rerunState);
 
 const startUpPromise = Promise.resolve().then(() => {
 
@@ -194,25 +191,28 @@ const startUpPromise = Promise.resolve().then(() => {
     rerunState.player = new Player(rerunState.renderers, titleBlock);
 
     rerunState.player.on('newCurrentBlock', (newCurrentBlock) => {
-        sendControlPanelAlert('setPlayerState', rerunState.player.getState());
+        rerunState.controlPanelHandler.sendAlert('setPlayerState', rerunState.player.getState());
     });
 
     rerunState.player.on('queueChange', (newQueue) => {
-        sendControlPanelAlert('setPlayerState', rerunState.player.getState());
+        rerunState.controlPanelHandler.sendAlert('setPlayerState', rerunState.player.getState());
     });
 
     rerunState.player.on('playbackStateChange', (newPlaybackState) => {
-        sendControlPanelAlert('setPlayerState', rerunState.player.getState());
+        rerunState.controlPanelHandler.sendAlert('setPlayerState', rerunState.player.getState());
     });
 
-    rerunState.player.on('paused', (pauseReason) => sendControlPanelAlert('setPlayerState', rerunState.player.getState()));
+    rerunState.player.on('paused', (pauseReason) => rerunState.controlPanelHandler.sendAlert('setPlayerState', rerunState.player.getState()));
 
 }).then(() => {
 
     console.info('[Startup] Creating download buffer...');
     rerunState.downloadBuffer = new WebVideoDownloader(path.join(__dirname + '/../temp'));
-    rerunState.downloadBuffer.cleanBuffer().then((n) => console.info('Cleaned ' + n + ' files from download buffer'))
-    .catch((error) => console.error('Failed to clean download buffer', error));
+    rerunState.downloadBuffer.cleanBuffer().then((n) => {
+        if (n > 0) {
+            console.info('Cleaned ' + n + ' files from download buffer');
+        }
+    }).catch((error) => console.error('Failed to clean download buffer', error));
 
     const itemsToPreload = 3;
 
@@ -263,6 +263,10 @@ const startUpPromise = Promise.resolve().then(() => {
     console.info('[Startup] Loading content sources...');
     rerunState.contentSourceManager = new ContentSourceManager();
 
+    rerunState.contentSourceManager.addChangeListener((sources) => {
+        rerunState.controlPanelHandler.sendAlert('setContentSources', sources);
+    });
+
     const sampleDirectory = "C:/Users/pangp/Videos/YT Testing videos";
     rerunState.contentSourceManager.addSource(new LocalDirectorySource('Sample videos', sampleDirectory));    
 
@@ -271,46 +275,8 @@ const startUpPromise = Promise.resolve().then(() => {
     console.info('[Startup] Starting control panel app...');
 
     app.ws('/controlWS', function(ws:WebSocket, req:ClientRequest) {
-        console.info('Control panel ['+ req.connection.remoteAddress +'] connected');
         new WebsocketHeartbeat(ws);
-        rerunState.connectedControlPanels.push(ws);
-
-        //Send the current status to the control panel
-        ws.send(JSON.stringify({
-            reqId: getReqID(), eventName: 'setPlayerState', data: rerunState.player.getState()
-        }));
-
-        ws.on('message', (message) => {
-            if (message === 'pong') {
-                return;
-            }
-            let cpRequest = JSON.parse(message.toString());
-
-            if (cpRequest != null) {
-                const responseHandler = (responseObject:any, isError: boolean) => {
-                    if (isError) {
-                        responseObject.status = 'error';
-                    } else {
-                        if (responseObject.status == null) {
-                            responseObject.status = 'ok'; //If the request handler didn't set a status, default to ok
-                        }
-                    }
-
-                    ws.send(JSON.stringify({ //Send an event back with a matching reqId
-                        reqId: cpRequest.reqId, eventName: 'res', data: responseObject
-                    }));
-                };
-
-                handleControlPanelRequest(cpRequest.req, cpRequest.data, 
-                    (resData) => responseHandler(resData, false), (errData) => responseHandler(errData, true));
-            }
-        });
-
-        ws.on('close', () => {
-            console.info('Control panel ['+ req.connection.remoteAddress +'] disconnected');
-            rerunState.connectedControlPanels.splice(rerunState.connectedControlPanels.indexOf(ws), 1);
-        });
-
+        rerunState.controlPanelHandler.registerWebsocket(ws);
     });
 
     return new Promise((resolve) => {
@@ -387,251 +353,6 @@ const startUpPromise = Promise.resolve().then(() => {
 
     //enqueueSamples();
 });
-
-let cpRequestIDCounter = 0;
-function getReqID() : number {
-    cpRequestIDCounter++;
-    return cpRequestIDCounter;
-}
-
-const invalidTypeError = {code: 'InvalidType', message: 'Invalid type for request'};
-const invalidArgumentsError = {code: 'InvalidArguments', message: 'The provided arguments are invalid'};
-
-function handleControlPanelRequest(requestName: string, data: any, respondWith: (obj:any) => void, respondWithError: (obj:any) => void) {
-    switch (requestName) {
-        //Player requests
-        case 'nextBlock': //Skip to the next scheduled ContentBlock
-            if (rerunState.player.getQueueLength() === 0) {
-                respondWithError({code: 'NoNextBlock', message: 'There is no scheduled ContentBlock to play.'});
-                break;
-            }
-
-            rerunState.player.progressQueue();
-            respondWith({message: 'Moved to next ContentBlock'});
-            break;
-        case 'playerRefresh': //The control panel requested an update on the player state
-            respondWith(rerunState.player.getState());
-            break;
-        case 'stopToTitle':
-            rerunState.player.goToDefaultBlock(2000);
-            respondWith({message: 'Stopped to title block.'});
-            break;
-        case 'restartPlayback':
-            rerunState.player.restartCurrentBlock();
-            respondWith({message: 'Restarted current block.'});
-            break;
-        case 'scheduleChange': //A reorder or delete of a scheduled ContentBlock
-            const requestedScheduleChange = ScheduleChange.makeNew(data);
-            if (requestedScheduleChange != null) {
-                const targetContentBlock = rerunState.player.getBlockInQueue(requestedScheduleChange.fromIndex);
-
-                if (requestedScheduleChange.fromIndex == null) {
-                    respondWithError(invalidArgumentsError);
-                    break;
-                }
-
-                //Verify that the request ContentBlockID and the targetContentBlock's ID are the same 
-                if (requestedScheduleChange.contentBlockId !== targetContentBlock.id) {
-                    //The control panel's schedule is wrong, probably outdated
-                    respondWithError({code:'IdMismatch', message: "The provided ContentBlock id did not match the target index's id."});
-                    break;
-                }
-
-                //Check that fromIndex is within the queue's range
-                if (requestedScheduleChange.fromIndex < 0 || requestedScheduleChange.fromIndex >= rerunState.player.getQueueLength()) {
-                    respondWithError({code:'OutOfBounds', message: "The provided fromIndex is outside of the queue's range"});
-                    break;
-                }
-
-                if (requestedScheduleChange.toIndex == -1) {
-                    //This is a delete request
-                    rerunState.player.removeBlockAt(requestedScheduleChange.fromIndex);
-                    respondWith({message: 'ContentBlock ' + requestedScheduleChange.contentBlockId + ' removed'});
-                } else {
-                    //This is a reorder request
-                    rerunState.player.reorderBlock(requestedScheduleChange.fromIndex, requestedScheduleChange.toIndex);
-                    respondWith({message: 'ContentBlock ' + requestedScheduleChange.contentBlockId + ' moved'});
-                }
-            } else {
-                respondWithError(invalidTypeError);
-            }
-            break;
-        //Content block requests
-        case 'updateContentBlock': //Requested to change an existing content block
-            if (data.block == null || data.block.id == null) {
-                respondWithError(invalidArgumentsError);
-                break;
-            }
-
-            //Try to create a new content block from the provided one
-            createContentBlockFromRequest(data.block).then((contentBlock: ContentBlock) => {
-                contentBlock.id = data.block.id; //Replace the generated id with the target id
-                rerunState.player.updateBlockAt(data.block.id, contentBlock);
-                respondWith({message: 'Updated block with id ' + data.block.id})
-            }).catch(error => {
-                console.error('Failed to create content block from request:', error);
-                respondWithError({message: error});
-            });
-            break;
-        case 'addContentBlock': //Requested to add a new content block to the queue
-            if (data.block == null) {
-                respondWithError(invalidArgumentsError);
-                break;
-            }
-
-            createContentBlockFromRequest(data.block).then((contentBlock: ContentBlock) => {
-                rerunState.player.enqueueBlock(contentBlock);
-                respondWith({message: 'Enqueued content block ' + data.block.id})
-            }).catch(error => {
-                console.error('Failed to enqueue new content block:', error);
-                respondWithError({message: error});
-            });
-            break;
-        //Event requests
-        case 'getEvents': //Requested a list of UserEvents
-            respondWith(rerunState.userEventManager.getEvents());
-            break;
-        case 'createEvent':
-            if (data.type == null) {
-                respondWithError(invalidArgumentsError);
-                break;
-            }
-
-            let newEvent = createUserEventFromRequest(data);
-            let newEventId = rerunState.userEventManager.addEvent(newEvent);
-            respondWith({message: 'Created new event with id=' + newEventId});
-            sendControlPanelAlert('setEventList', rerunState.userEventManager.getEvents());
-
-            break;
-        case 'updateEvent': //Request to update an existing userEvent
-            if (data.eventId == null || data.newEvent == null) {
-                respondWithError(invalidArgumentsError);
-                break;
-            }
-
-            let updatedEvent = createUserEventFromRequest(data.newEvent);
-
-            rerunState.userEventManager.updateEvent(data.eventId, updatedEvent);
-            respondWith({message: 'Updated event id=' + data.eventId});
-            sendControlPanelAlert('setEventList', rerunState.userEventManager.getEvents());
-            break;
-        case 'deleteEvent':
-            if (data.eventId == null) {
-                respondWithError(invalidArgumentsError);
-                break;
-            }
-
-            rerunState.userEventManager.removeEvent(data.eventId);
-            respondWith({message: 'Removed event with id =' + data.eventId});
-            sendControlPanelAlert('setEventList', rerunState.userEventManager.getEvents());
-            break;
-        case 'setEventEnabled': //Setting the enabled property of a UserEvent
-            if (data.eventId == null || data.enabled == null) {
-                respondWithError(invalidArgumentsError);
-                break;
-            }
-
-            rerunState.userEventManager.setEventEnabled(data.eventId, data.enabled);
-            respondWith({message: (data.enabled ? 'Enabled' : 'Disabled') + ' event ID ' + data.eventId});
-            sendControlPanelAlert('setEventList', rerunState.userEventManager.getEvents());
-            break;
-        //Graphics events
-        case 'getGraphicsPackages': //Requeted a list of available graphics packages
-            respondWith(rerunState.graphicsManager.getAvailablePackages());
-            break;
-        default:
-            console.info('Unknown control panel request "' + requestName + '"');
-            respondWithError({message: 'Unknown request "' + requestName + '"'})
-    }
-}
-
-function sendControlPanelAlert(event:string, data?:object) {
-    let eventObj = {eventName: event, data: data}
-    for (let socketIP in rerunState.connectedControlPanels) {
-        rerunState.connectedControlPanels[socketIP].send(JSON.stringify(eventObj));
-    }
-}
-
-function createContentBlockFromRequest(requestedBlock: any) : Promise<ContentBlock> {
-    return new Promise((resolve, reject) => {
-        //Try to create the MediaObject
-        createMediaObjectFromRequest(requestedBlock.media).then((mediaObject : MediaObject) => {
-            let block = new ContentBlock(uuidv4(), mediaObject);
-            block.colour = requestedBlock.colour;
-            block.playbackConfig = requestedBlock.playbackConfig;
-            resolve(block);
-        }).catch(error => reject(error));
-    });
-}
-
-function createMediaObjectFromRequest(requestedMedia: any) : Promise<MediaObject> {
-    return new Promise((resolve, reject) => {
-        let newMedia = MediaObject.CreateEmpty(requestedMedia.type);
-        newMedia.name = requestedMedia.name;
-    
-        switch (requestedMedia.type) {
-            case 'Local video file':
-                //Check that the file exists
-                if (fs.existsSync(requestedMedia.location.path)) {
-                    if (!fs.lstatSync(requestedMedia.location.path).isDirectory()) {
-                        //Get file metadata for this media object
-                        mediaObjectFromVideoFile(requestedMedia.location.path).then((generatedMedia: MediaObject) => {
-                            generatedMedia.name = requestedMedia.name; //Set the requested name rather than the generated one
-                            resolve(generatedMedia);
-                        }).catch(error => reject(error));
-                    } else {
-                        reject('Failed to create MediaObject from request: Provided path is a directory, not a file');
-                    }
-                } else {
-                    reject("Failed to create MediaObject from request: File not found");
-                }
-                break;
-            case 'Youtube video':
-                reject('YT not yet implemented');
-                break;
-            case 'RTMP stream':
-                reject('RTMP not yet implemented');
-                break;
-            case 'Rerun title graphic':
-                reject('Rerun graphic not yet implemented');
-                break;
-            default:
-                reject('Unknown media type "' + requestedMedia.type + '"');
-        }
-    });
-}
-
-function createUserEventFromRequest(requestedEvent: any) : UserEvent {
-    if (requestedEvent.type === 'Player') {
-        let action = createActionFromRequest(requestedEvent.action);
-        try {
-            let playerEvent = new PlayerBasedEvent (
-                requestedEvent.name, rerunState.player, requestedEvent.targetPlayerEvent,
-                requestedEvent.frequency, action, requestedEvent.eventOffset
-            );
-            return playerEvent;
-        } catch (err) {
-            console.error('Failed to create PlayerBasedEvent from request:', err);
-        }
-    } else {
-        console.warn('Could not create UserEvent for unsupported event type "' + requestedEvent.type + '"');
-        return requestedEvent;
-    }
-}
-
-function createActionFromRequest(requestedAction: any) : UserEvent.Action {
-    if (requestedAction.type === 'GraphicEvent') {
-        try {
-            return new ShowGraphicAction(requestedAction.targetLayer, 
-                                         rerunState.graphicsManager.sendGraphicEvent, requestedAction.animInTime);
-        } catch (err) {
-            console.error('Failed to create GraphicEvent from request:', err);
-        }
-    } else {
-        console.warn('Could not create UserEvent action for unsupported action type "' + requestedAction.type + '"');
-        return requestedAction;
-    }
-}
 
 function injectIPIntoHTML(pathToHTML:PathLike, ipAddress:string) : string {
     let rawHTML = fs.readFileSync(pathToHTML);

@@ -37,15 +37,8 @@ export class Stack<ElementType> {
     }
 
     private popToSize() {
-        if (this.stackSize <= 0) {
-            this.array = [];
-            return;
-        }
-
         while (this.array.length > this.stackSize) {
             this.array.shift();
         }
-
-        console.info('done popping');
     }
 }

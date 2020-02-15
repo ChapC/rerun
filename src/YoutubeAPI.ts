@@ -1,10 +1,14 @@
 import { youtube_v3, google } from 'googleapis';
 
-const youtube = google.youtube({
-    version: 'v3', auth: 'AIzaSyDnOOiNzMSg6JuE7xnO9N2Bxq7dArn6k4M'
-});
+let youtube : youtube_v3.Youtube = null;
 
 export function getVideoMetadata(id: string) : Promise<youtube_v3.Schema$Video> {
+    if (youtube == null) {
+        youtube = google.youtube({
+            version: 'v3', auth: 'AIzaSyDnOOiNzMSg6JuE7xnO9N2Bxq7dArn6k4M'
+        });
+    }
+
     return new Promise((resolve, reject) => {
         youtube.videos.list({
             id: id, part: 'contentDetails, snippet, id, liveStreamingDetails'

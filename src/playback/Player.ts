@@ -2,7 +2,7 @@ import {ContentBlock} from './ContentBlock';
 import {MediaObject} from './MediaObject';
 import {ContentRenderer} from './renderers/ContentRenderer';
 import {ContentTypeRendererMap} from '../index';
-import {IntervalMillisCounter} from '../IntervalMillisCounter';
+import {IntervalMillisCounter} from '../helpers/IntervalMillisCounter';
 const colors = require('colors');
 
 export class Player {
