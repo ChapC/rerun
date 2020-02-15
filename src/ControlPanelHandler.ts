@@ -207,6 +207,25 @@ export default class ControlPanelHandler {
                 respondWith(this.rerunState.graphicsManager.getAvailablePackages());
                 break;
             //Content sources
+            case 'pullFromContentSource': //Pull the next media object from a content source and queue it for playback
+                if (data.sourceId == null) {
+                    respondWithError(invalidArgumentsError);
+                    break;
+                }
+
+                const targetSource = this.rerunState.contentSourceManager.getSource(data.sourceId);
+                if (targetSource == null) {
+                    respondWithError({message: 'No source with id ' + data.sourceId});
+                    break;
+                }
+
+                targetSource.poll().then((block) => {
+                    this.rerunState.player.enqueueBlock(block);
+                    respondWith({ message: 'Queued item from source ' + targetSource.name});
+                }).catch((error) => {
+                    respondWithError({message: error});
+                });
+                break;
             case 'getContentSources':
                 respondWith(this.rerunState.contentSourceManager.getSources());
                 break;
@@ -243,6 +262,7 @@ export default class ControlPanelHandler {
                 case 'LocalDirectory':
                     let ldirSource = new LocalDirectorySource(requestedSource.name, requestedSource.directory);
                     ldirSource.id = requestedSource.id;
+                    ldirSource.setShuffle(requestedSource.shuffle);
                     resolve(ldirSource);
                     break;
                 default:

@@ -29,6 +29,10 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> {
         this.sourceListChanged();
     }
 
+    getSource(id: string) {
+        return this.loadedSources[id];
+    }
+
     getSources() : ContentSource[] {
         return Object.values(this.loadedSources);
     }
