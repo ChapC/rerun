@@ -39,6 +39,7 @@ export class IntervalMillisCounter {
 
     private tickDown = () => {
         this.currentCount -= (Date.now() - this.startTime);
+        this.startTime = Date.now();
         this.callback(this.currentCount);
     }
 
