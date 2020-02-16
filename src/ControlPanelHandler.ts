@@ -243,7 +243,33 @@ export default class ControlPanelHandler {
                     respondWithError({ message: error });
                 });
                 break;
-            
+            case 'getAutoPool':
+                respondWith({
+                    pool: this.rerunState.contentSourceManager.getAutoSourcePool(),
+                    options: this.rerunState.contentSourceManager.getAutoPoolOptions()
+                });
+                break;
+            case 'setAutoPoolOptions':
+                if (data.enabled == null || data.targetQueueSize == null || data.pullOrder == null) {
+                    respondWithError(invalidArgumentsError);
+                    break;                    
+                }
+
+                this.rerunState.contentSourceManager.setAutoPoolOptions(data);
+                respondWith({ message: 'Set new auto pool options'});
+                this.sendAlert('setAutoPoolOptions', this.rerunState.contentSourceManager.getAutoPoolOptions());
+                break;
+            case 'setUseSourceInPool': //Set whether a content source should be included in the pool
+                if (data.sourceId == null || data.enabled == null) {
+                    respondWithError(invalidArgumentsError);
+                    break;                             
+                }
+
+                this.rerunState.contentSourceManager.setUseSourceForAuto(data.sourceId, data.enabled);
+                respondWith({ message: 'Set source ' + data.sourceId + ' to ' + data.enabled});
+                this.sendAlert('setAutoPoolList', this.rerunState.contentSourceManager.getAutoSourcePool());
+                break;
+
             default:
                 console.info('Unknown control panel request "' + requestName + '"');
                 respondWithError({ message: 'Unknown request "' + requestName + '"' })

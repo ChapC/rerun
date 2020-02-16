@@ -261,7 +261,7 @@ const startUpPromise = Promise.resolve().then(() => {
 }).then(() => {
 
     console.info('[Startup] Loading content sources...');
-    rerunState.contentSourceManager = new ContentSourceManager();
+    rerunState.contentSourceManager = new ContentSourceManager(rerunState.player);
 
     rerunState.contentSourceManager.addChangeListener((sources) => {
         rerunState.controlPanelHandler.sendAlert('setContentSources', sources);
@@ -271,6 +271,8 @@ const startUpPromise = Promise.resolve().then(() => {
     let local = new LocalDirectorySource('Sample videos', sampleDirectory);
     local.setShuffle(true);
     rerunState.contentSourceManager.addSource(local);    
+
+    rerunState.contentSourceManager.updateAutoPoolNow();
 
 }).then(() => {
 

@@ -51,11 +51,12 @@ export class LocalDirectorySource extends ContentSource {
                         }
                     }
                 }
+
                 let nextVideoPath = this.videosInFolder[nextIndex];
+                this.recentVideoPaths.push(nextVideoPath);
 
                 mediaObjectFromVideoFile(nextVideoPath).then((mediaObject) => {
                     let contentBlock = new ContentBlock(uuidv4(), mediaObject);
-                    this.recentVideoPaths.push(nextVideoPath);
                     resolve(contentBlock);
                 }).catch(error => reject(error));
 
@@ -71,6 +72,7 @@ export class LocalDirectorySource extends ContentSource {
                 //Check if the number of files in the directory have changed since we last refreshed
                 this.countFilesIn(this.directory).then((fileCount) => {
                     if (this.videosInFolder.length !== fileCount) {
+                        console.info(this.videosInFolder.length + ' vs ' + fileCount);
                         this.refresh().then(() => resolve()).catch(error => reject(error));
                     } else {
                         resolve();
@@ -129,13 +131,31 @@ export class LocalDirectorySource extends ContentSource {
 
     private countFilesIn(directory: string) : Promise<number> {
         return new Promise((resolve, reject) => {
+            let supportedFiles = 0;
             fs.readdir(directory, (err:Error, files:string[]) => {
                 if (!err) {
-                    resolve(files.length);
+                    for (let filePath of files) {
+                        if (supportedVideoExtensions.includes(path.extname(filePath))) {
+                            supportedFiles++;
+                        }
+                    }
+                    resolve(supportedFiles);
                 } else {
                     reject(err);
                 }
             });
+        });
+    }
+
+    private printDirectoryIndex(currentIndex: number) {
+        console.info('------------------------------------');
+        this.videosInFolder.forEach((video, index) => {
+            let vName = path.basename(video);
+            if (index === currentIndex) {
+                console.info(' -> ' + vName);
+            } else {
+                console.info(vName);
+            }
         });
     }
 
