@@ -26,7 +26,7 @@ export namespace MediaObject {
         LocalVideoFile = 'Local video file',
         YouTubeVideo = 'Youtube video',
         RTMPStream = 'RTMP stream',
-        RerunTitle = 'Rerun title graphic'
+        RerunGraphic = 'Rerun graphic'
     }
 
     export enum ContentType {

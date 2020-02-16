@@ -20,6 +20,8 @@ class VLCSettings {
 
 //Controls an OBS VLC source
 export class OBSVideoRenderer implements ContentRenderer {
+    supportsBackgroundLoad = false;
+    
     private obsVideoPlayer: OBSConnection.SourceInterface;
     constructor(obsVideoPlayer:OBSConnection.SourceInterface) {
         this.obsVideoPlayer = obsVideoPlayer;

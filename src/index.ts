@@ -186,7 +186,7 @@ const startUpPromise = Promise.resolve().then(() => {
     //Use the title screen graphic as the default block (when nothing else is available)
     const titleScreenGraphicName = 'Title screen';
     const titleScreenGraphicLocation = new GraphicsLayerLocation('FHTV title slate');
-    const titleBlock = new ContentBlock('titleBlock', new MediaObject(MediaObject.MediaType.RerunTitle, titleScreenGraphicName, titleScreenGraphicLocation, Number.POSITIVE_INFINITY));
+    const titleBlock = new ContentBlock('titleBlock', new MediaObject(MediaObject.MediaType.RerunGraphic, titleScreenGraphicName, titleScreenGraphicLocation, Number.POSITIVE_INFINITY));
 
     rerunState.player = new Player(rerunState.renderers, titleBlock);
 
@@ -248,7 +248,7 @@ const startUpPromise = Promise.resolve().then(() => {
 
     let titleEvent = new PlayerBasedEvent('Inbetween title screen', 
         rerunState.player, PlayerBasedEvent.TargetEvent.InBetweenPlayback, 3, 
-        new ShowGraphicAction('FHTV title slate', rerunState.graphicsManager.sendGraphicEvent, 2000), 1000
+        new ShowGraphicAction('FHTV title slate', rerunState.graphicsManager.sendGraphicEvent, 2000), 1500
     );
     rerunState.userEventManager.addEvent(titleEvent);
 
@@ -268,7 +268,9 @@ const startUpPromise = Promise.resolve().then(() => {
     });
 
     const sampleDirectory = "C:/Users/pangp/Videos/YT Testing videos";
-    rerunState.contentSourceManager.addSource(new LocalDirectorySource('Sample videos', sampleDirectory));    
+    let local = new LocalDirectorySource('Sample videos', sampleDirectory);
+    local.setShuffle(true);
+    rerunState.contentSourceManager.addSource(local);    
 
 }).then(() => {
 

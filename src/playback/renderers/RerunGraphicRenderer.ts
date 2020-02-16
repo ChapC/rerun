@@ -3,6 +3,8 @@ import { MediaObject } from './../MediaObject';
 
 //Sends graphic events when media starts or stops. Used for title screens.
 export class RerunGraphicRenderer implements ContentRenderer {
+    supportsBackgroundLoad = false;
+    
     private sendGraphicEvent: (event: string, forLayer: string) => void;
     constructor(sendGraphicEvent: (event: string, forLayer: string) => void) {
         this.sendGraphicEvent = sendGraphicEvent;

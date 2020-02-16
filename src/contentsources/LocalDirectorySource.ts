@@ -20,8 +20,7 @@ export class LocalDirectorySource extends ContentSource {
     private directory : string;
     private videosInFolder : string[];
     private recentVideoPaths : Stack<string> = new Stack(5); 
-    //Used to to stop returning the same block too frequently when shuffling,
-    //and to keep track of the last video when working alphabetically
+    //TODO: Use the stack to prevent the same block appearing too frequently when shuffling
 
     constructor(name: string, directory: string) {
         super(name);
@@ -40,6 +39,14 @@ export class LocalDirectorySource extends ContentSource {
                     for (let i = 0; i < this.videosInFolder.length; i++) {
                         if (this.videosInFolder[i] === lastVideoPath) {
                             nextIndex = (i + 1);
+                            if (nextIndex >= this.videosInFolder.length) {
+                                //Wrap around to the start
+                                nextIndex = 0;
+                                //Re-shuffle the array if set
+                                if (this.shuffle) {
+                                    this.shuffleArray(this.videosInFolder);
+                                }
+                            }
                             break;
                         }
                     }
@@ -58,10 +65,17 @@ export class LocalDirectorySource extends ContentSource {
 
     private refreshIfNeeded() : Promise<void> {
         return new Promise((resolve, reject) => {
-            if (this.videosInFolder == null) {
+            if (this.videosInFolder == null) { //We haven't scanned yet
                 this.refresh().then(() => resolve()).catch(error => reject(error));
             } else {
-                resolve();
+                //Check if the number of files in the directory have changed since we last refreshed
+                this.countFilesIn(this.directory).then((fileCount) => {
+                    if (this.videosInFolder.length !== fileCount) {
+                        this.refresh().then(() => resolve()).catch(error => reject(error));
+                    } else {
+                        resolve();
+                    }
+                }).catch(error => reject(error));
             }
         });
     }
@@ -111,6 +125,18 @@ export class LocalDirectorySource extends ContentSource {
                 this.shuffleArray(this.videosInFolder);
             }
         }
+    }
+
+    private countFilesIn(directory: string) : Promise<number> {
+        return new Promise((resolve, reject) => {
+            fs.readdir(directory, (err:Error, files:string[]) => {
+                if (!err) {
+                    resolve(files.length);
+                } else {
+                    reject(err);
+                }
+            });
+        });
     }
 
     asJSON() : any {

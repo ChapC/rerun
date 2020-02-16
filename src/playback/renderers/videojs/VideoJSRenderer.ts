@@ -4,6 +4,7 @@ import { OBSConnection } from '../../../OBSConnection';
 import WebSocket = require('ws');
 
 export class VideoJSRenderer implements ContentRenderer {
+    supportsBackgroundLoad = false;
     private obsBrowserSource : OBSConnection.SourceInterface;
     private vjsSocket : WebSocket;
 

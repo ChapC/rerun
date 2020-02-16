@@ -3,13 +3,21 @@ import {MediaObject} from './MediaObject';
 import {ContentRenderer} from './renderers/ContentRenderer';
 import {ContentTypeRendererMap} from '../index';
 import {IntervalMillisCounter} from '../helpers/IntervalMillisCounter';
+import {MultiListenable} from '../helpers/MultiListenable';
 const colors = require('colors');
 
-export class Player {
+/* Events
+*   - "newCurrentBlock": The current block changed . EventData contains the new ContentBlock.
+*   - "queueChange": The queue was updated. EventData contains the new queue.
+*   - "paused": An inbetween pause is active. EventData contains the pause reason.
+*   - "relTime:[start/end]-[n]": Fired at (or as close as possible to) [n] seconds after the start/before the end.
+*/
+export class Player extends MultiListenable {
     private rendererMap: ContentTypeRendererMap;
     private defaultBlock: ContentBlock;
 
     constructor(rendererMap: ContentTypeRendererMap, defaultBlock: ContentBlock) {
+        super();
         this.rendererMap = rendererMap;
         this.defaultBlock = defaultBlock;
 
@@ -40,17 +48,17 @@ export class Player {
                 //Find the longest requested pause and use that
                 let longestPause = new Player.Pause('', 0);
                 for (let pause of Object.values(this.requestedPauses)) {
-                    if (longestPause.remainingSec < pause.remainingSec) {
+                    if (longestPause.remainingMs < pause.remainingMs) {
                         longestPause = pause;
                     }
                 }
 
                 //Start the pause countdown
                 this.activePause = longestPause;
-                this.info('Starting inbetween pause (source=' + longestPause.source + ',length=' + longestPause.remainingSec + 's)');
+                this.info('Starting inbetween pause (source=' + longestPause.source + ',length=' + longestPause.remainingMs + 'ms)');
                 this.fireEvent('paused', this.activePause);
                 this.attemptNextBlockPreload(true); //Force preload the next block (we can force b/c we know nothing is playing)
-                this.activePauseCounter.countDownFrom(this.activePause.remainingSec);
+                this.activePauseCounter.countDownFrom(this.activePause.remainingMs);
             } else {
                 this.progressQueue(); //No pauses, progress immediately
             }
@@ -253,12 +261,16 @@ export class Player {
             return; //No next block
         }
 
-        if (!forceLoad && nextBlock.media.type === this.currentBlock.media.type) {
-            //Can't preload the next block; its renderer is already in use
-            return;
-        }
-        this.info('Preloading the next block (' + nextBlock.media.name + ')');
         let targetRenderer = this.rendererMap[nextBlock.media.location.getType()].renderer;
+
+        if (!forceLoad && nextBlock.media.type === this.currentBlock.media.type) {
+            //The renderer for the next block is already in use, check if it supports background loading
+            if (!targetRenderer.supportsBackgroundLoad) {
+                return;
+            }
+        }
+        
+        this.info('Preloading the next block (' + nextBlock.media.name + ')');
 
         if (targetRenderer.getLoadedMedia() != null) {
             //If the renderer already has media loaded, unload it first
@@ -293,9 +305,9 @@ export class Player {
             return;
         }
 
-        this.activePause.remainingSec = newPauseTime;
+        this.activePause.remainingMs = newPauseTime;
 
-        if (this.activePause.remainingSec <= 0) {
+        if (this.activePause.remainingMs <= 0) {
             //The pause has finished
             this.clearPause();
             this.progressQueue();
@@ -314,6 +326,7 @@ export class Player {
 
     //Adds the pause and returns its ID
     addInbetweenPause(pause: Player.Pause) : number {
+        console.info('Added inbetween pause ' + pause.remainingMs + 'ms');
         let pauseId = this.pauseIdCounter++;
         pause.id = pauseId;
         this.requestedPauses[pauseId] = pause;
@@ -328,58 +341,6 @@ export class Player {
         }
     }
 
-    /* Events
-    *   - "newCurrentBlock": The current block changed . EventData contains the new ContentBlock.
-    *   - "queueChange": The queue was updated. EventData contains the new queue.
-    *   - "paused": An inbetween pause is active. EventData contains the pause reason.
-    *   - "relTime:[start/end]-[n]": Fired at (or as close as possible to) [n] seconds after the start/before the end.
-    */
-    private listenerIdCounter = 0;
-    private listenerIdEventMap : {[id: number] : string} = {}; //Maps listenerID to the event it's listening for
-    private eventListeners: {[event: string] : Player.EventCallback[]} = {}; //Maps eventName to a list of registered callbacks
-
-    on(eventName:string, callback:(ev: any) => void) : number {
-        let listenerId = this.listenerIdCounter++;
-        this.listenerIdEventMap[listenerId] = eventName;
-
-        if (!(eventName in this.eventListeners)) {
-            this.eventListeners[eventName] = [];
-        }
-        this.eventListeners[eventName].push(new Player.EventCallback(listenerId, callback));
-
-        return listenerId;
-    }
-
-    cancelListener(listenerId: number) {
-        //Find the event that this listener is subscribed to
-        let eventName = this.listenerIdEventMap[listenerId];
-        if (eventName == null) {
-            return; //This event has probably already been cancelled
-        }
-        if (this.eventListeners[listenerId] == null) {
-            return; //No listeners have been regisered for this event
-        }
-        //Remove the callback from eventListeners
-        for (let i = 0; i < this.eventListeners[listenerId].length; i++) {
-            let event = this.eventListeners[listenerId][i];
-            if (event.id === listenerId) {
-                this.eventListeners[listenerId].splice(i, 1);
-                break;
-            }
-        }
-
-        delete this.listenerIdEventMap[listenerId];
-    }
-
-    private fireEvent(eventName:string, eventData:any) {
-        let callbackList = this.eventListeners[eventName];
-        if (callbackList != null) {
-            for (let i = 0; i < callbackList.length; i++) {
-                let callback: (ev: object) => void = callbackList[i].callback;
-                callback(eventData);
-            }
-        }
-    }
 
     info(message:string) : void {
         console.info('[Player] ' + message);
@@ -395,9 +356,7 @@ export class Player {
 }
 
 export namespace Player {
-    export class EventCallback {constructor(public id:number, public callback:((ev: object) => void)){}};
-
-    export class Pause {id:number; constructor(public source: string, public remainingSec: number){}};
+    export class Pause {id:number; constructor(public source: string, public remainingMs: number){}};
 
     export enum PlaybackState {
         InBlock = 'InBlock', Loading = 'Loading', Errored = 'Error'

@@ -223,6 +223,7 @@ export default class ControlPanelHandler {
                     this.rerunState.player.enqueueBlock(block);
                     respondWith({ message: 'Queued item from source ' + targetSource.name});
                 }).catch((error) => {
+                    console.error('Pull from content source failed ', error);
                     respondWithError({message: error});
                 });
                 break;

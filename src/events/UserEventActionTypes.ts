@@ -7,9 +7,8 @@ export class ShowGraphicAction extends UserEvent.Action {
         this.sendGraphicEvent('in', this.targetLayer);
     }
 
-    executeInThenOut(outDelay: number) {
-        this.sendGraphicEvent('in', this.targetLayer);
-        setTimeout(() => this.sendGraphicEvent('out', this.targetLayer), outDelay + this.animInTime);
+    executeOut() {
+        this.sendGraphicEvent('out', this.targetLayer);
     }
 
     constructor(public targetLayer: string, public sendGraphicEvent: (event: string, layer: string) => void, public animInTime?: number) {
