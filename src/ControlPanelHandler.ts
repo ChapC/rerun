@@ -227,6 +227,28 @@ export default class ControlPanelHandler {
                     respondWithError({message: error});
                 });
                 break;
+            case 'newContentSource':
+                if (data.newSource == null) {
+                    respondWithError(invalidArgumentsError);
+                    break;
+                }
+
+                this.createContentSourceFromRequest(data.newSource).then((source) => {
+                    this.rerunState.contentSourceManager.addSource(source);
+                    respondWith({ message: 'Created source with id=' + data.eventId });
+                }).catch((error) => {
+                    respondWithError({ message: error });
+                });
+                break;
+            case 'deleteContentSource':
+                if (data.sourceId == null) {
+                    respondWithError(invalidArgumentsError);
+                    break;
+                }
+
+                this.rerunState.contentSourceManager.removeSource(data.sourceId);
+                respondWith({ message: 'Removed source with id ' + data.sourceId});
+                break;
             case 'getContentSources':
                 respondWith(this.rerunState.contentSourceManager.getSources());
                 break;

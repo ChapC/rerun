@@ -34,8 +34,8 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> {
         this.sourceListChanged();
     }
 
-    removeSource(source : ContentSource) {
-        delete this.loadedSources[source.id];
+    removeSource(sourceId : string) {
+        delete this.loadedSources[sourceId];
         this.sourceListChanged();
     }
 
@@ -105,6 +105,10 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> {
     }
 
     setAutoPoolOptions(newOptions: ContentSourceManager.AutoPoolOptions) {
+        if (!this.autoPoolOptions.enabled && newOptions.enabled) {
+            //Switched auto pool on
+            this.updateAutoPoolNow();
+        }
         this.autoPoolOptions = newOptions;
     }
 
