@@ -30,7 +30,6 @@ const os = require('os');
 const colors = require('colors');
 const jsdom = require("jsdom");
 const { JSDOM } = jsdom;
-const moment = require('moment');
 
 //Find my local IP
 let localIP:string = null;

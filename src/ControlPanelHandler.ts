@@ -7,6 +7,7 @@ import { MediaObject } from './playback/MediaObject';
 import { PlayerBasedEvent } from './events/UserEventTypes';
 import { ShowGraphicAction } from './events/UserEventActionTypes';
 import { LocalDirectorySource, mediaObjectFromVideoFile } from './contentsources/LocalDirectorySource';
+import { mediaObjectFromYoutube } from './contentsources/YoutubeChannelSource';
 import WebSocket from 'ws';
 import { ContentSource } from './contentsources/ContentSource';
 
@@ -355,7 +356,9 @@ export default class ControlPanelHandler {
                     }
                     break;
                 case 'Youtube video':
-                    reject('YT not yet implemented');
+                    mediaObjectFromYoutube(requestedMedia.location.path, this.rerunState.downloadBuffer).then((media: MediaObject) => {
+                        resolve(media);
+                    }).catch(error => reject(error));
                     break;
                 case 'RTMP stream':
                     reject('RTMP not yet implemented');
