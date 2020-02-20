@@ -10,20 +10,20 @@ export class IntervalMillisCounter {
 
     private currentCount = 0;
 
-    private startTime:number;
+    private lastTickTime:number;
     private interval:NodeJS.Timeout = null;
 
     start(startValue:number = 0) {
         clearInterval(this.interval);        
         this.currentCount = startValue;
-        this.startTime = Date.now();
+        this.lastTickTime = Date.now();
         this.interval = setInterval(this.tickUp, this.frequencyMs);
     }
 
     countDownFrom(startValue:number) {
         clearInterval(this.interval); 
         this.currentCount = startValue;
-        this.startTime = Date.now();
+        this.lastTickTime = Date.now();
         this.interval = setInterval(this.tickDown, this.frequencyMs)
     }
 
@@ -33,13 +33,14 @@ export class IntervalMillisCounter {
 
     private tickUp = () => {
         //How much time has passed since the last tick?
-        this.currentCount = (Date.now() - this.startTime);
+        this.currentCount += (Date.now() - this.lastTickTime);
+        this.lastTickTime = Date.now();
         this.callback(this.currentCount);
     }
 
     private tickDown = () => {
-        this.currentCount -= (Date.now() - this.startTime);
-        this.startTime = Date.now();
+        this.currentCount -= (Date.now() - this.lastTickTime);
+        this.lastTickTime = Date.now();
         this.callback(this.currentCount);
     }
 
