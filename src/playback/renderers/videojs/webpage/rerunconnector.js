@@ -74,17 +74,20 @@ class RerunConnector {
     handleRerunEvent(message) {
         switch (message.request) {
             case 'load':
+                window.hidePlayer();
                 this.loadVideo(message.data).then(() => {
                     message.respond(true);
                 }).catch(error => message.respond(false, error));
                 break;
             case 'play':
+                window.showPlayer();
                 this.videoJS.play().then(() => {
                     message.respond(true);
                 }).catch(error => message.respond(false, error));
                 break;
             case 'pause':
                 this.videoJS.pause();
+                window.hidePlayer();
                 message.respond(true);
                 break;
             case 'restart':

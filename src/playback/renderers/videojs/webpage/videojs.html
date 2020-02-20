@@ -21,10 +21,19 @@
                     errorContainerEl.style.opacity = 1;
                     playerContainerEl.style.opacity = 0;
                     window.vjs.pause();
+                    window.hidePlayer();
                 }
 
                 window.hideError = () => {
                     errorContainerEl.style.opacity = 0;
+                    window.showPlayer();
+                }
+
+                window.hidePlayer = () => {
+                    playerContainerEl.style.opacity = 0;
+                }
+
+                window.showPlayer = () => {
                     playerContainerEl.style.opacity = 1;
                 }
 
