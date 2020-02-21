@@ -1,4 +1,5 @@
 import WebSocket = require("ws");
+import fs from "fs";
 import { ClientRequest } from "http";
 import { MediaObject } from "./playback/MediaObject";
 import { Player } from "./playback/Player";
@@ -20,12 +21,13 @@ import { PathLike } from "fs";
 import { WebVideoDownloader } from './WebVideoDownloader';
 import ControlPanelHandler from './ControlPanelHandler';
 import { GraphicsLayerLocation, WebBufferLocation } from './playback/MediaLocations';
+import RerunUserSettings from "./RerunUserSettings";
+import { AlertContainer } from "./helpers/AlertContainer";
 
 const express = require('express');
 const app = express();
 const expressWs = require('express-ws')(app);
 const path = require('path');
-const fs = require('fs');
 const os = require('os');
 const colors = require('colors');
 const jsdom = require("jsdom");
@@ -49,9 +51,8 @@ if (localIP == null) {
     localIP = "127.0.0.1";
 }
 
-//Addressses and stuff (should eventually move to a user-accessible preferences section)
-const obsSocketAddress = 'localhost:4444';
 const supportedVideoExtensions = ['.mp4', '.mkv', '.flv', '.avi', '.m4v', '.mov'];
+const saveFolder = path.join(__dirname, 'userdata');
 
 console.info(colors.magenta.bold('-- Rerun v0.1 --\n'));
 
@@ -68,7 +69,10 @@ class OBSStateObject {
 
 export type ContentTypeRendererMap = {[contentType in MediaObject.ContentType] : {renderer: ContentRenderer, focus: Function}};
 export class RerunStateObject {
-    obs: OBSStateObject; renderers: ContentTypeRendererMap = {} as ContentTypeRendererMap;
+    alerts: AlertContainer;
+    obs: OBSStateObject; 
+    renderers: ContentTypeRendererMap = {} as ContentTypeRendererMap;
+    userSettings: RerunUserSettings;
     graphicsManager: GraphicManager;
     downloadBuffer: WebVideoDownloader;
     controlPanelHandler : ControlPanelHandler;
@@ -80,6 +84,25 @@ const rerunState = new RerunStateObject();
 rerunState.controlPanelHandler = new ControlPanelHandler(rerunState);
 
 const startUpPromise = Promise.resolve().then(() => {
+    
+    //Alerts listener
+    rerunState.alerts = new AlertContainer();
+    rerunState.alerts.addChangeListener((alerts) => rerunState.controlPanelHandler.sendAlert('setAlerts', alerts));
+
+    //Create the userdata folder if it doesn't already exist
+    return new Promise((resolve, reject) => {
+        fs.mkdir(saveFolder, { recursive: true }, (error) => {
+            if (!error) {
+                rerunState.userSettings = new RerunUserSettings(path.join(saveFolder, 'settings.json'));
+                rerunState.userSettings.readFromSaved().then(resolve).catch(reject);
+            } else {
+                console.error(error);
+                reject("Couldn't access user data folder");
+            }
+        });
+    });
+
+}).then(() => {
 
     //-- OBS connection --
     console.info('[Startup] Connecting to OBS...');
@@ -87,8 +110,9 @@ const startUpPromise = Promise.resolve().then(() => {
     rerunState.obs = obsState;
     
     //Verify that rerun sources are active in OBS
+    const obsAddress = rerunState.userSettings.obsAddress.getValue();
     obsState.connection = new OBSConnection();
-    return obsState.connection.connect(obsSocketAddress).catch(() => Promise.reject('Could not connect to OBS at ' + obsSocketAddress )).then(() => {
+    return obsState.connection.connect(obsAddress).catch(() => Promise.reject('Could not connect to OBS at ' + obsAddress)).then(() => {
         return obsState.connection.getSourceInterface('rerun_localvideo', 'vlc_source').then((sourceInterface) => {
             if (sourceInterface == null) {
                 return Promise.reject("Couldn't find OBS source for local video playback (should be VLC source called 'rerun_localvideo')");
@@ -140,7 +164,7 @@ const startUpPromise = Promise.resolve().then(() => {
 
     //Local video renderer
     const localVidRenderer = new OBSVideoRenderer(rerunState.obs.sources.localVideo);
-    //Ensure the OBS source is disactivated to start with
+    //Ensure the OBS source is deactivated to start with
     localVidRenderer.stop();
     rerunState.renderers[MediaObject.ContentType.LocalFile] = {
         renderer: localVidRenderer, focus: () => rerunState.obs.connection.moveSourceToTop(rerunState.obs.sources.localVideo)
@@ -291,70 +315,11 @@ const startUpPromise = Promise.resolve().then(() => {
 
 }).then(() => {
 
-    console.info(colors.bold.green('Rerun ready! View the control panel at ' + colors.underline('http://' + localIP + ':8080')));
+    console.info(colors.bold.green('Rerun ready! View the control panel at ' + colors.underline('http://' + localIP + ':8080') + ' on your local network'));
 
 }).catch((error) => console.error(colors.red('Failed to start Rerun:'), error)).then(() => {
     //Startup finished
 
-    const ytSampleUrls = [
-        'https://www.youtube.com/watch?v=ktTurs7leRo', 'https://www.youtube.com/watch?v=4EYWACRQg_Q', 'https://www.youtube.com/watch?v=ML-jS6dmuBY',
-        'https://www.youtube.com/watch?v=SG6TPTBBz7g', 'https://www.youtube.com/watch?v=b_Ai0hTW6_M', 'https://www.youtube.com/watch?v=S79GcTt_8pc',
-        'https://www.youtube.com/watch?v=1B7hZ2AYyuU', 'https://www.youtube.com/watch?v=SGgMvp0Nm18', 'https://www.youtube.com/watch?v=2sGN3peODwY'
-    ];
-
-    //Load sample videos
-    const numberOfSamples = 6;
-    let samplesFetched = 0;
-
-    const shuffle = (a: any[]) => {
-        for (let i = a.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [a[i], a[j]] = [a[j], a[i]];
-        }
-        return a;
-    }
-
-    shuffle(ytSampleUrls);
-
-    /*
-    //Youtube video samples
-    const enqueueSamples = () => {
-        const url = ytSampleUrls[samplesFetched];
-        const videoId = new URLSearchParams(url.split('?')[1]).get('v');
-        getVideoMetadata(videoId).then((metadata) => {
-            let duration : Duration = moment.duration(metadata.contentDetails.duration); //Duration is in ISO8601 format
-            try {
-                let media = new MediaObject(
-                    MediaObject.MediaType.YouTubeVideo, metadata.snippet.title, 
-                    rerunState.downloadBuffer.bufferYoutubeVideo(ytSampleUrls[samplesFetched]),
-                    duration.asMilliseconds()
-                );
-                media.thumbnail = metadata.snippet.thumbnails.default.url;
-                rerunState.player.enqueueBlock(new ContentBlock('ytSample' + samplesFetched, media));
-            } catch (error) {
-                console.error("Couldn't create Youtube MediaObject", error);
-            }
-
-            samplesFetched += 1;
-            if (samplesFetched < numberOfSamples) {
-                enqueueSamples();
-            }
-        });
-    }
-
-    /*
-    //Local file samples
-    const enqueueSamples = () => {
-        rerunState.contentSourceManager.getSources()[0].poll(true).then((block) => {
-            rerunState.player.enqueueBlock(block);
-            samplesFetched = samplesFetched + 1;
-            if (samplesFetched < numberOfSamples) {
-                enqueueSamples();
-            }
-        }).catch(error => console.error('Error while polling sample videos source:', error));
-    }*/
-
-    //enqueueSamples();
 });
 
 function injectIPIntoHTML(pathToHTML:PathLike, ipAddress:string) : string {

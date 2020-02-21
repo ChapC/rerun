@@ -16,6 +16,7 @@ const uuidv4 = require('uuid/v4');
 const invalidTypeError = { code: 'InvalidType', message: 'Invalid type for request' };
 const invalidArgumentsError = { code: 'InvalidArguments', message: 'The provided arguments are invalid' };
 
+//TODO: I don't like having this in one class. ControlPanelHandler should be refactored so that interested classes register to handle their own requests
 export default class ControlPanelHandler {
     constructor(private rerunState: RerunStateObject) { }
 
@@ -67,6 +68,10 @@ export default class ControlPanelHandler {
 
     handleRequest(requestName: string, data: any, respondWith: (obj: any) => void, respondWithError: (obj: any) => void) {
         switch (requestName) {
+            //Alerts
+            case 'getAlerts':
+                respondWith(this.rerunState.alerts);
+                break;
             //Player requests
             case 'nextBlock': //Skip to the next scheduled ContentBlock
                 if (this.rerunState.player.getQueueLength() === 0) {
@@ -292,6 +297,23 @@ export default class ControlPanelHandler {
                 respondWith({ message: 'Set source ' + data.sourceId + ' to ' + data.enabled});
                 this.sendAlert('setAutoPoolList', this.rerunState.contentSourceManager.getAutoSourcePool());
                 break;
+            //User settings
+            case 'getUserSettings':
+                respondWith(this.rerunState.userSettings);
+                break;
+            case 'setUserSetting':
+                if (data.propertyKey == null || data.value == null) {
+                    respondWithError(invalidArgumentsError);
+                    break;                             
+                }
+
+                try {
+                    this.rerunState.userSettings.setFormProperty(data.propertyKey, data.value);
+                    respondWith({ message: "Set user setting '" + data.propertyKey + "' to '" + data.value + "'"});
+                } catch (error) {
+                    respondWithError(error);
+                }
+                break;
 
             default:
                 console.info('Unknown control panel request "' + requestName + '"');
@@ -314,6 +336,9 @@ export default class ControlPanelHandler {
                     ldirSource.id = requestedSource.id;
                     ldirSource.setShuffle(requestedSource.shuffle);
                     resolve(ldirSource);
+                    break;
+                case 'YTChannel':
+                    reject('Not yet implemented');
                     break;
                 default:
                     reject("Unknown source type '" + requestedSource.type + "'");
