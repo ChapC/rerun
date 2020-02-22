@@ -336,7 +336,7 @@ export class Player extends MultiListenable {
     removeInbetweenPause(pauseId: number) {
         delete this.requestedPauses[pauseId];
         //If this pause is currently active, remove it there too
-        if (this.activePause.id === pauseId) {
+        if (this.activePause && this.activePause.id === pauseId) {
             this.activePause = null;
         }
     }
