@@ -1,17 +1,15 @@
-import JSONSavable from "./JSONSavable";
+import { IJSONSavable, JSONSavable } from "./JSONSavable";
 import { FormProperty } from "./FormProperty";
 
-export default abstract class JSONSavableForm extends JSONSavable {
-    constructor(savePath: string) {
-        super(savePath);
-    }
+export default abstract class JSONSavableForm implements IJSONSavable {
+    constructor(public savePath: string) {}
 
     protected saveOnChange() : void {
         //Add a change listener for every FormProperty on the object
         for (const key of Object.keys(this)) {
             if (this[key] instanceof FormProperty) {
                 const property = this[key] as FormProperty<any>;
-                property.addChangeListener(() => this.serializeJSON(this).catch(error => console.error('Error saving form to JSON', error)));
+                property.addChangeListener(() => JSONSavable.serializeJSON(this, this.savePath).catch(error => console.error('Error saving form to JSON', error)));
             }
         }
     }

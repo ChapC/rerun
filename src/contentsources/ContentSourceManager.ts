@@ -1,21 +1,26 @@
 import { ContentSource } from './ContentSource';
 import { SingleListenable } from '../helpers/SingleListenable';
 import { Player } from '../playback/Player'; 
-import { ContentBlock } from '../playback/ContentBlock';
+import { IJSONSavable, JSONSavable } from '../persistance/JSONSavable';
+import { LocalDirectorySource } from './LocalDirectorySource';
 
 const uuidv4 = require('uuid/v4');
 
 //... it manages content sources
-export class ContentSourceManager extends SingleListenable<ContentSource[]> {
-    constructor(private player : Player) {
+export class ContentSourceManager extends SingleListenable<ContentSource[]> implements IJSONSavable {
+    constructor(public savePath: string, private player : Player) {
         super();
         player.on('queueChange', (newQueue) => this.onQueueChanged());
     };
 
     private loadedSources : {[id: string] : ContentSource} = {};
     
-    addSource(source : ContentSource) : string {
-        source.id = uuidv4();
+    addSource(source : ContentSource, useId?: string) : string {
+        if (!useId) {
+            source.id = uuidv4();
+        } else {
+            source.id = useId;
+        }
         this.loadedSources[source.id] = source;
 
         //Listen for alerts from this source so they can be propagated to listeners here
@@ -49,6 +54,7 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> {
 
     private sourceListChanged = () => {
         this.triggerListeners(Object.values(this.loadedSources));
+        JSONSavable.serializeJSON(this, this.savePath);
     }
 
     //Automatic content pool
@@ -110,6 +116,7 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> {
             this.updateAutoPoolNow();
         }
         this.autoPoolOptions = newOptions;
+        JSONSavable.serializeJSON(this, this.savePath);
     }
 
     getAutoPoolOptions() {
@@ -118,6 +125,7 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> {
 
     setUseSourceForAuto(sourceId: string, useSource: boolean) {
         this.autoSourceEnabled[sourceId] = useSource;
+        JSONSavable.serializeJSON(this, this.savePath);
     }
 
     //Return all sources that are enabled in the auto pool
@@ -130,6 +138,45 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> {
         });
         return enabledSources;
     }
+
+    toJSON() : any {
+        return {
+            loadedSources: this.loadedSources, autoPoolOptions: this.autoPoolOptions,
+            autoSourceEnabled: this.autoSourceEnabled
+        };
+    }
+
+    deserialize(object: any, suppressChangeEvent = false): boolean {
+        if (object.loadedSources && object.autoPoolOptions && object.autoSourceEnabled) {
+            this.autoPoolOptions = object.autoPoolOptions;
+            this.autoSourceEnabled = object.autoSourceEnabled;
+
+            //Initialize a ContentSource class for each source
+            for (let sourceId in object.loadedSources) {
+                const sourceFromObj = object.loadedSources[sourceId];
+
+                let source : ContentSource;
+                switch (sourceFromObj.type) {
+                    case 'LocalDirectory':
+                        source = LocalDirectorySource.fromAny(sourceFromObj);
+                        break;
+                    default:
+                        return false; //Unknown ContentSource type
+                }
+
+                if (source != null) {
+                    this.addSource(source, sourceFromObj.id);
+                } else {
+                    return false; //Creating the ContentSource failed
+                }
+            }
+
+            return true;
+        } else {
+            return false;
+        }
+    }
+
 }
 
 export namespace ContentSourceManager {

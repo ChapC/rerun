@@ -24,6 +24,7 @@ import { GraphicsLayerLocation, WebBufferLocation } from './playback/MediaLocati
 import RerunUserSettings from "./RerunUserSettings";
 import { AlertContainer } from "./helpers/AlertContainer";
 import StartupSteps from "./StartupSteps";
+import { JSONSavable } from "./persistance/JSONSavable";
 
 const express = require('express');
 const app = express();
@@ -104,7 +105,7 @@ rerunState.startup.appendStep("Save data", (rerunState, l) => {
         fs.mkdir(saveFolder, { recursive: true }, (error) => {
             if (!error) {
                 rerunState.userSettings = new RerunUserSettings(path.join(saveFolder, 'settings.json'), rerunState);
-                rerunState.userSettings.readFromSaved().then(resolve).catch(reject);
+                JSONSavable.updateSavable(rerunState.userSettings).then(resolve).catch(reject);
             } else {
                 l.error(error);
                 reject("Couldn't access user data folder");
@@ -349,19 +350,16 @@ rerunState.startup.appendStep("Content sources", (rerunState, l) => {
 
     return new Promise((resolve, reject) => {
         try {
-            rerunState.contentSourceManager = new ContentSourceManager(rerunState.player);
+            rerunState.contentSourceManager = new ContentSourceManager(path.join(saveFolder, 'contentsources.json'), rerunState.player);
+            JSONSavable.updateSavable(rerunState.contentSourceManager).then(() => {
+                rerunState.contentSourceManager.addChangeListener((sources) => {
+                    rerunState.controlPanelHandler.sendAlert('setContentSources', sources);
+                });
+        
+                rerunState.contentSourceManager.updateAutoPoolNow();
+                resolve();
+            }).catch(error => reject(error));
     
-            rerunState.contentSourceManager.addChangeListener((sources) => {
-                rerunState.controlPanelHandler.sendAlert('setContentSources', sources);
-            });
-    
-            const sampleDirectory = "C:/Users/pangp/Videos/YT Testing videos";
-            let local = new LocalDirectorySource('Sample videos', sampleDirectory);
-            local.setShuffle(true);
-            rerunState.contentSourceManager.addSource(local);    
-    
-            rerunState.contentSourceManager.updateAutoPoolNow();
-            resolve();
         } catch (error) {
             reject(error);
         }

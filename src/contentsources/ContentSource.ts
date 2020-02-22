@@ -11,6 +11,18 @@ export abstract class ContentSource {
     abstract poll() : Promise<ContentBlock>;
     abstract refresh() : Promise<void>; //Reset the source's pool of ContentBlocks (if it has a pool)
     abstract asJSON() : any;
+    abstract fromAny(object: any) : ContentSource; //This should be an effectively static method -_-
+
+    static superFromAny(object: any, child: ContentSource) : boolean {
+        if (object.type && object.id && object.name) {
+            child.type = object.type;
+            child.id = object.id;
+            child.name = object.name;
+            return true;
+        } else {
+            return false;
+        }
+    }
 
     toJSON() : any {
         return {

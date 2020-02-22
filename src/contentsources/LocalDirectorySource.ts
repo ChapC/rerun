@@ -163,6 +163,20 @@ export class LocalDirectorySource extends ContentSource {
         return { directory: this.directory, shuffle: this.shuffle };
     }
 
+    fromAny(object: any) : LocalDirectorySource {
+        if (object.directory && object.shuffle && object.name) {
+            let newLocalSource = new LocalDirectorySource(object.name, object.directory);
+            if (ContentSource.superFromAny(object, newLocalSource)) {
+                newLocalSource.setShuffle(object.shuffle);
+                return newLocalSource;
+            } else {
+                return null;
+            }
+        } else {
+            return null;
+        }
+    }
+
     shuffleArray(targetArray : any[]){
         var i,j,swap;
         for (i=targetArray.length-1;i>0; i--){
@@ -170,6 +184,22 @@ export class LocalDirectorySource extends ContentSource {
           swap = targetArray[i];
           targetArray[i] = targetArray[j];
           targetArray[j] = swap;
+        }
+    }
+}
+
+export namespace LocalDirectorySource {
+    export function fromAny(object: any) : LocalDirectorySource {
+        if (object.directory && object.shuffle && object.name) {
+            let newLocalSource = new LocalDirectorySource(object.name, object.directory);
+            if (ContentSource.superFromAny(object, newLocalSource)) {
+                newLocalSource.setShuffle(object.shuffle);
+                return newLocalSource;
+            } else {
+                return null;
+            }
+        } else {
+            return null;
         }
     }
 }
