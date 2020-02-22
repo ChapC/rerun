@@ -27,7 +27,7 @@ export default abstract class JSONSavableForm extends JSONSavable {
         }
     };
 
-    deserialize(object: any) : boolean {
+    deserialize(object: any, suppressChangeEvent = false) : boolean {
         const allValuesCopied = [];
 
         //Try to find a value for each FormProperty on the object
@@ -36,7 +36,7 @@ export default abstract class JSONSavableForm extends JSONSavable {
                 const property = this[key] as FormProperty<any>;
                 //Look for the key on the serialized object
                 if (object[key]) {
-                    allValuesCopied.push(property.trySetValue(object[key]));
+                    allValuesCopied.push(property.trySetValue(object[key], suppressChangeEvent));
                 } else {
                     allValuesCopied.push(false);
                 }

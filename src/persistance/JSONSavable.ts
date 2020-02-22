@@ -11,7 +11,7 @@ export default abstract class JSONSavable {
                     fs.readFile(this.savePath, (error, data) => {
                         if (!error) {
                             try {
-                                if (!this.deserialize(JSON.parse(data.toString()))) {
+                                if (!this.deserialize(JSON.parse(data.toString()), true)) {
                                     console.warn("One or more properties from the save file (" + this.savePath + ") wasn't accepted. The file may be corrupted.");
                                 }
                                 resolve();
@@ -45,5 +45,5 @@ export default abstract class JSONSavable {
         });
     }
 
-    abstract deserialize(object: any) : boolean //Loads the values from the JSON object into the current class
+    abstract deserialize(object: any, suppressChangeEvent: boolean) : boolean //Loads the values from the JSON object into the current class
 }

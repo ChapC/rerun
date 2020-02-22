@@ -4,13 +4,13 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start:dev": "nodemon",
+    "start:dev": "nodemon --no-stdin",
     "start": "npm run build && node build/index.js",
     "build": "rimraf ./build && tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
-  "author": "Chap Calanan",
+  "author": "Chap Callanan",
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^13.5.0",

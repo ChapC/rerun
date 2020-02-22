@@ -1,20 +1,22 @@
-const colors = require('colors');
+import { RerunStateObject } from ".";
 
+const colors = require('colors');
 const OBSWebSocket = require('obs-websocket-js');
 
+const NoConnectionAlert = 'NoOBSConnection';
 const rerunGroupName = 'Rerun playback layer';
 export class OBSConnection {
     obs: any;
     canvasDimensions: CanvasDimensions;
-    obsAddress: string;
     private onConnectCallbacks: Function[] = [];
     private onDisconnectCallbacks: Function[] =[]
 
-    constructor() {
+    constructor(public obsAddress: string, private rerunState : RerunStateObject) {
         this.obs = new OBSWebSocket();
 
         this.obs.on('ConnectionOpened', (data:any) => {
             this.info('Connected to OBS at ' + this.obsAddress);
+            rerunState.alerts.clearAlert(NoConnectionAlert);
 
             //Find canvas dimensions
             this.obs.send('GetVideoInfo').then((videoInfo:any) => {
@@ -25,20 +27,29 @@ export class OBSConnection {
                     c();
                 }
             }).catch((error:Error) => this.error('Failed to fetch canvas dimensions:', error));
+
+            //Check that all the required sources are loaded in OBS
+            this.verifySources();
         });
 
         this.obs.on('ConnectionClosed', (data:any) => {
-            this.info('Disconnected');
-
+            rerunState.alerts.error(NoConnectionAlert, "No OBS connection", "Could not connect to OBS at " + this.obsAddress);
             for (let c of this.onDisconnectCallbacks) {
                 c();
             }
         });
     }
 
-    connect(address:string) : Promise<void> {
-        this.obsAddress = address;
-        return this.obs.connect({address: address});
+    connect(ipAddress?: string) : Promise<void> {
+        if (ipAddress) {
+            this.obsAddress = ipAddress;
+        }
+        this.obs.disconnect();
+        return this.obs.connect({address: this.obsAddress});
+    }
+
+    disconnect() {
+        this.obs.disconnect();
     }
 
     onConnect(callback: Function) {
@@ -47,6 +58,32 @@ export class OBSConnection {
 
     onDisconnect(callback: Function) {
         this.onDisconnectCallbacks.push(callback);
+    }
+
+    //Verify that rerun sources are active in OBS
+    verifySources() {
+        this.getSourceInterface('rerun_localvideo', 'vlc_source').then((sourceInterface) => {
+            if (sourceInterface == null) {
+                this.error("Couldn't find OBS source for local video playback (should be VLC source called 'rerun_localvideo')");
+                return;
+            }
+            this.rerunState.obs.sources.localVideo = sourceInterface;
+        });
+
+        this.getSourceInterface('rerun_webvideo', 'browser_source').then((sourceInterface) => {
+            if (sourceInterface == null) {
+                this.error("Couldn't find OBS source for web video playback (should be browser source called 'rerun_webvideo')");
+                return;
+            }
+            this.rerunState.obs.sources.webVideo = sourceInterface;
+        });
+        this.getSourceInterface('rerun_rtmp', 'ffmpeg_source').then((sourceInterface) => {
+            if (sourceInterface == null) {
+                this.error("Couldn't find OBS source for RTMP stream playback (should be media source called 'rerun_rtmp')");
+                return;
+            }
+            this.rerunState.obs.sources.rtmp = sourceInterface;
+        });
     }
 
     //TODO: subscribe to source destroy and rename events to ensure the source is always available

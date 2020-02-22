@@ -18,7 +18,7 @@ export abstract class FormProperty<T> extends SingleListenable<T> {
         return this.value;
     }
 
-    trySetValue(value: any) : boolean {
+    trySetValue(value: any, suppressEvent = false) : boolean {
         let v = value;
         if (value.type && value.value) {
             //This is a serialized FormProperty. Use the value from inside it
@@ -27,7 +27,9 @@ export abstract class FormProperty<T> extends SingleListenable<T> {
 
         const acceptedValue = this.acceptAny(v);
         if (acceptedValue != null) {
-            this.triggerListeners(acceptedValue);
+            if (!suppressEvent) {
+                this.triggerListeners(acceptedValue);
+            }
             return true;
         }
         return false;

@@ -52,6 +52,10 @@ export abstract class MultiListenable {
         delete this.listenerIdEventMap[listenerId];
     }
 
+    cancelAllListeners() {
+        this.eventListeners = {};
+    }
+
     protected fireEvent(eventName:string, eventData:any) {
         let callbackList = this.eventListeners[eventName];
         if (callbackList != null) {
