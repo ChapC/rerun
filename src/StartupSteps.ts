@@ -1,8 +1,8 @@
 import PrefixedLogger from "./helpers/PrefixedLogger";
 import { RerunStateObject } from ".";
-import readline from 'readline';
 import process from 'process';
 
+const keypress = require('keypress');
 const colors = require('colors');
 
 type stepFunction = ((rerunState: RerunStateObject, logger: PrefixedLogger) => Promise<void>);
@@ -10,7 +10,9 @@ export default class StartupSteps {
     private steps : StoredStep[] = [];
     private logger = new PrefixedLogger("Startup");
 
-    constructor(private rerunState: RerunStateObject) {}
+    constructor(private rerunState: RerunStateObject) {
+        keypress(process.stdin);
+    }
 
     appendStep(stepKey: string, step: stepFunction, cleanUp: () => void) {
         this.steps.push(new StoredStep(stepKey, step, cleanUp));
@@ -49,6 +51,7 @@ export default class StartupSteps {
     
     start() {
         this.cleanupSucceededSteps();
+        process.stdin.off('keypress', this.restartOrCancel);
         this.startupFailed = false;
         this.succeededStepsCount = 0;
         const startPromises = this.steps.reduce((promiseChain: any, currentStep: StoredStep, currentIndex, array) => {
@@ -67,10 +70,7 @@ export default class StartupSteps {
                 console.info(colors.green('Rerun ready!'));
             } else {
                 console.info("An error prevented Rerun from starting properly. Press enter to try again or Ctrl+C to exit...");
-
-                readline.emitKeypressEvents(process.stdin);
-                process.stdin.setRawMode(true);
-                process.stdin.on('keypress', (chunk, key) => this.restartOrCancel(chunk, key));
+                process.stdin.on('keypress', this.restartOrCancel);          
             }
         });
     }
@@ -82,21 +82,17 @@ export default class StartupSteps {
         }
     }
     
-    private restartOrCancel(chunk: any, key: any) {
+    private restartOrCancel = (chunk: any, key: any) => {
         if (key) {
             if (key.name === "c" && key.ctrl) {
-                process.stdin.off('keypress', (chunk, key) => this.restartOrCancel(chunk, key));
-                process.stdin.setRawMode(false);
-                
+                process.stdin.off('keypress', this.restartOrCancel);
+
                 //Quit
                 console.info('Shutdown');
                 this.cleanupSucceededSteps();
                 process.exit();
-            } else if (key.name === "return" || key.name === "enter") {
-                process.stdin.off('keypress', (chunk, key) => this.restartOrCancel(chunk, key));
-                process.stdin.setRawMode(false);
-
-                console.info('Restarting...');
+            } else if (key.name === "return" || key.name === "enter" || key.name === 'm') {//Keypress returns the 'm' key instead of enter on my system?
+                console.info('Restarting...\n');
                 this.cleanupSucceededSteps();
                 this.start();
             }

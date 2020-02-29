@@ -24,11 +24,6 @@ export default class ControlPanelHandler {
     registerWebsocket(ws: WebSocket) {
         this.connectedControlPanels.push(ws);
 
-        //Send the current status to the control panel
-        ws.send(JSON.stringify({
-            reqId: this.getReqID(), eventName: 'setPlayerState', data: this.rerunState.player.getState()
-        }));
-
         ws.on('message', (message) => {
             if (message === 'pong') {
                 return;
@@ -37,6 +32,10 @@ export default class ControlPanelHandler {
 
             if (cpRequest != null) {
                 const responseHandler = (responseObject:any, isError: boolean) => {
+                    if (responseObject === null) {
+                        responseObject = {};
+                    }
+
                     if (isError) {
                         responseObject.status = 'error';
                     } else {
@@ -58,6 +57,11 @@ export default class ControlPanelHandler {
         ws.on('close', () => {
             this.connectedControlPanels.splice(this.connectedControlPanels.indexOf(ws), 1);
         });
+
+        //Send the current status to the control panel
+        ws.send(JSON.stringify({
+            reqId: this.getReqID(), eventName: 'setPlayerState', data: this.rerunState.player.getState()
+        }));        
     }
 
     cpRequestIDCounter = 0;
@@ -83,7 +87,11 @@ export default class ControlPanelHandler {
                 respondWith({ message: 'Moved to next ContentBlock' });
                 break;
             case 'playerRefresh': //The control panel requested an update on the player state
-                respondWith(this.rerunState.player.getState());
+                if (this.rerunState.player) {
+                    respondWith(this.rerunState.player.getState());
+                } else {
+                    respondWith(null);
+                }
                 break;
             case 'stopToTitle':
                 this.rerunState.player.goToDefaultBlock(2000);

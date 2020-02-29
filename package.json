@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start:dev": "nodemon --no-stdin",
+    "start:dev": "nodemon",
     "start": "npm run build && node build/index.js",
     "build": "rimraf ./build && tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -35,6 +35,7 @@
     "fluent-ffmpeg": "^2.1.2",
     "googleapis": "^47.0.0",
     "jsdom": "^16.0.1",
+    "keypress": "^0.2.1",
     "moment": "^2.24.0",
     "obs-websocket-js": "^4.0.0",
     "recursive-readdir": "^2.2.2",
