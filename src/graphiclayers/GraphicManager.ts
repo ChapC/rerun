@@ -169,6 +169,10 @@ export class GraphicManager {
     getAvailablePackages() : GraphicPackage[] {
         return this.availablePackages;
     }
+
+    getActivePackage() : GraphicPackage {
+        return this.activePackage;
+    }
 }
 
 function removeRoute(routePath: string, expressApp: any) {
@@ -247,10 +251,10 @@ class GraphicPackage {
     }
 }
 
-class GraphicLayer {
+export class GraphicLayer {
     path: string; //The path to the raw HTML file
     name: string; //Friendly name of the layer
-    animationTimings: {[eventName: string] : Number}; //Map of [graphic event : animation duration]
+    animationTimings: {[eventName: string] : number}; //Map of [graphic event : animation duration]
     html: string; //Processed html string
 
     constructor(path:string, name:string) {
@@ -280,8 +284,4 @@ class GraphicLayer {
             name: this.name, path: this.path, animationTimings: this.animationTimings
         }
     }
-}
-
-export class GraphicLayerReference {
-    constructor(public packageName: string, public layerName:string) {}
 }

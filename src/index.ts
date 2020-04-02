@@ -9,8 +9,6 @@ import { RerunGraphicRenderer } from './playback/renderers/RerunGraphicRenderer'
 import { ContentBlock } from "./playback/ContentBlock";
 import { WebsocketHeartbeat } from './helpers/WebsocketHeartbeat';
 import { OBSConnection } from './OBSConnection';
-import { PlayerBasedEvent } from './events/UserEventTypes';
-import { ShowGraphicAction } from './events/UserEventActionTypes';
 import { UserEventManager } from "./events/UserEventManager";
 import { GraphicManager } from "./graphiclayers/GraphicManager";
 import { LocalDirectorySource } from './contentsources/LocalDirectorySource';
@@ -25,6 +23,8 @@ import RerunUserSettings from "./RerunUserSettings";
 import { AlertContainer } from "./helpers/AlertContainer";
 import StartupSteps from "./StartupSteps";
 import { JSONSavable } from "./persistance/JSONSavable";
+import { PlayerEventLogic } from "./events/UserEventTypes";
+import { ShowGraphicAction } from "./events/UserEventActionTypes";
 
 const express = require('express');
 const app = express();
@@ -321,28 +321,28 @@ rerunState.startup.appendStep("User events", (rerunState, l) => {
     return new Promise((resolve, reject) => {
         l.info('Fetching events...');
         try {
-            //TODO Import events from a json file
-            rerunState.userEventManager = new UserEventManager();    
+            rerunState.userEventManager = new UserEventManager(path.join(saveFolder, 'events.json'), rerunState);
         
-            let titleEvent = new PlayerBasedEvent('Inbetween title screen', 
-                rerunState.player, PlayerBasedEvent.TargetEvent.InBetweenPlayback, 3, 
-                new ShowGraphicAction('FHTV title slate', rerunState.graphicsManager.sendGraphicEvent, 2000), 1500
-            );
-            rerunState.userEventManager.addEvent(titleEvent);
-        
-            let lowerBarEvent = new PlayerBasedEvent('Up next bar', 
-                rerunState.player, PlayerBasedEvent.TargetEvent.PlaybackStart, 1, 
-                new ShowGraphicAction('Up next bar', rerunState.graphicsManager.sendGraphicEvent), 3000
-            );
-            rerunState.userEventManager.addEvent(lowerBarEvent); 
+            //Built-in event logic types
+            rerunState.userEventManager.eventLogicTypes.registerSubtype("Player", (r) => new PlayerEventLogic(r.player));
+            //Built-in event action types
+            rerunState.userEventManager.eventActionTypes.registerSubtype("Show a graphic", (r) => new ShowGraphicAction(r.graphicsManager));
 
-            resolve();
+            //TODO: Plugins should be able to define their own event logic and action types
+
+            //Listeners
+            rerunState.userEventManager.addChangeListener((events) => rerunState.controlPanelHandler.sendAlert('setEventList', events));
+            rerunState.userEventManager.addChangeListener((events) => JSONSavable.serializeJSON(rerunState.userEventManager.toJSON(), rerunState.userEventManager.savePath))
+            
+            //Try load from saved events
+            JSONSavable.updateSavable(rerunState.userEventManager).then(resolve).catch(reject);
         } catch (error) {
             reject(error);
         }
     });
 }, function cleanup() {
     rerunState.userEventManager = null;
+    rerunState.userEventManager.cancelAllListeners();
 });
 
 rerunState.startup.appendStep("Content sources", (rerunState, l) => {

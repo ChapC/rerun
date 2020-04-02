@@ -1,17 +1,17 @@
 import { IJSONSavable, JSONSavable } from "./JSONSavable";
-import { FormProperty } from "./FormProperty";
+import { FormProperty, StringSelectFormProperty } from "./FormProperty";
 
 export default abstract class JSONSavableForm implements IJSONSavable {
-    constructor(public savePath: string) {}
+    constructor(public savePath: string) { }
 
-    protected saveOnChange() : void {
+    protected saveOnChange(): void {
         //Add a change listener for every FormProperty on the object
         this.scanForProperties().forEach(f => {
             f.prop.addChangeListener(() => JSONSavable.serializeJSON(this, this.savePath).catch(error => console.error('Error saving form to JSON', error)));
         });
     }
 
-    setFormProperty(propertyName: string, value: any) : void {
+    setFormProperty(propertyName: string, value: any): void {
         if (this[propertyName] instanceof FormProperty) {
             const property = this[propertyName] as FormProperty<any>;
             if (!property.trySetValue(value)) {
@@ -22,29 +22,48 @@ export default abstract class JSONSavableForm implements IJSONSavable {
         }
     };
 
-    deserialize(object: any, suppressChangeEvent = false) : boolean {
-        const allValuesCopied : boolean[] = [];
+    deserialize(object: any, triggerChangeEvent = true): boolean {
+        const allValuesCopied: boolean[] = [];
 
         //Try to find a value for each FormProperty on the object
         this.scanForProperties().forEach(keyPropPair => {
             //Look for the key on the serialized object
-            const serializedValue = this.getValueFor(keyPropPair.key, object); 
+            const serializedValue = this.getValueAt(keyPropPair.key, object);
             //Nested FormProperty objects returned from scanForProperties are stored with keys like "nestedForm.nestedValue1",
             //but the actual serialized object stores them normally, as {nestedForm: {nestedValue1: theProperty}}. 
             //getValueFor() accepts the former and returns the latter (if it exists).
             if (serializedValue) {
-                allValuesCopied.push(keyPropPair.prop.trySetValue(serializedValue, suppressChangeEvent));
+                allValuesCopied.push(keyPropPair.prop.trySetValue(serializedValue, triggerChangeEvent));
             } else {
                 allValuesCopied.push(false);
             }
         });
-        
-        return allValuesCopied.every((accepted) => accepted);
+
+        const worked = allValuesCopied.every((accepted) => accepted);
+        return worked;
+    }
+
+
+    //Returns a JSON object that contains all the object's keys and the FormProperty type of each of them
+    //Used to create an object from scratch.
+    getOutline() : any {
+        const outline: { [key: string]: string } = {};
+        this.scanForProperties().forEach(keyPropPair => {
+            let propOutline : any = { propertyType: keyPropPair.prop.getType(), name: keyPropPair.prop.name };
+
+            if (keyPropPair.prop.getType() === 'select-string') {
+                //Outlines for select properties should include the available options
+                propOutline.options = (<StringSelectFormProperty>keyPropPair.prop).getOptions();
+            }
+
+            this.setValueAt(keyPropPair.key, propOutline, outline);
+        });
+        return outline;
     }
 
     //Recursively scans this object for FormProperty objects
-    private scanForProperties() : KeyFormProperty[] {
-        const formProps : KeyFormProperty[] = [];
+    private scanForProperties(): KeyFormProperty[] {
+        const formProps: KeyFormProperty[] = [];
         for (const key of Object.keys(this)) {
             if (this[key] instanceof FormProperty) {
                 const property = this[key] as FormProperty<any>;
@@ -62,31 +81,52 @@ export default abstract class JSONSavableForm implements IJSONSavable {
     }
 
     //Like object["key"] but supports nested objects (eg. object["key.this.that"])
-    private getValueFor(keyString: string, obj: any) : any {
-        let targetValue = obj;
-      
+    private getValueAt(keyString: string, targetObject: any): any {
+        let targetValue = targetObject;
+
         try {
             keyString.split(".").forEach(subKey => {
-              targetValue = targetValue[subKey];
+                targetValue = targetValue[subKey];
             });
         } catch {
             return undefined;
         }
 
         return targetValue;
-      }
-      
+    }
+
+    //getValueAt() but for setting stuff
+    private setValueAt(keyString: string, value: any, targetObject: any) {
+        let targetValue = targetObject;
+        const keySplit = keyString.split(".");
+
+        //Create all the keys up to the value
+        for (let i = 0; i < keySplit.length - 1; i++) {
+            let subKey = keySplit[i];
+            if (!targetValue[subKey]) {
+                //Create this key if it doesn't exist
+                targetValue[subKey] = {};
+            }
+            targetValue = targetValue[subKey];
+        }
+
+        //Set the actual value
+        targetValue[keySplit[keySplit.length - 1]] = value;
+    }
+
 
     //Makes Typescript allow us to index the object
-    [string : string] : any;
+    [string: string]: any;
 
-    toJSON() : any {
-        let obj = Object.assign({}, this);
-        delete obj['savePath'];
+    //Automatically serialize all FormProperties on this object
+    toJSON(): any {
+        let obj : {[key: string] : any} = {};
+        let toSerialize = this.scanForProperties();
+        toSerialize.forEach(keyPropPair => obj[keyPropPair.key] = keyPropPair.prop);
         return obj;
     }
 }
 
 class KeyFormProperty {
-    constructor(public key: string, public prop: FormProperty<any>) {};
+    constructor(public key: string, public prop: FormProperty<any>) { };
 }

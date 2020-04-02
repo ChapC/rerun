@@ -27,7 +27,7 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
         source.alerts.addChangeListener(this.sourceListChanged);
 
         //Sources are included in the auto pool by default
-        this.autoSourceEnabled[source.id] = true;
+        this.autoEnabledSources[source.id] = true;
 
         this.sourceListChanged();
         return source.id;
@@ -41,6 +41,7 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
 
     removeSource(sourceId : string) {
         delete this.loadedSources[sourceId];
+        delete this.autoEnabledSources[sourceId];
         this.sourceListChanged();
     }
 
@@ -59,7 +60,7 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
 
     //Automatic content pool
     private autoPoolOptions : ContentSourceManager.AutoPoolOptions = new ContentSourceManager.AutoPoolOptions(); 
-    private autoSourceEnabled : {[sourceId: string] : boolean} = {};
+    private autoEnabledSources : {[sourceId: string] : boolean} = {};
     
     //Block pool updates until the current one has finished (indeterminate due to promises)
     private pullInProgress = false;
@@ -124,15 +125,15 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
     }
 
     setUseSourceForAuto(sourceId: string, useSource: boolean) {
-        this.autoSourceEnabled[sourceId] = useSource;
+        this.autoEnabledSources[sourceId] = useSource;
         JSONSavable.serializeJSON(this, this.savePath);
     }
 
     //Return all sources that are enabled in the auto pool
     getAutoSourcePool() : ContentSource[] {
         const enabledSources : ContentSource[] = [];
-        Object.keys(this.autoSourceEnabled).forEach(sourceId => {
-            if (this.autoSourceEnabled[sourceId]) {
+        Object.keys(this.autoEnabledSources).forEach(sourceId => {
+            if (this.autoEnabledSources[sourceId]) {
                 enabledSources.push(this.loadedSources[sourceId]);
             }
         });
@@ -142,14 +143,22 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
     toJSON() : any {
         return {
             loadedSources: this.loadedSources, autoPoolOptions: this.autoPoolOptions,
-            autoSourceEnabled: this.autoSourceEnabled
+            autoEnabledSources: this.autoEnabledSources
         };
     }
 
-    deserialize(object: any, suppressChangeEvent = false): boolean {
-        if (object.loadedSources && object.autoPoolOptions && object.autoSourceEnabled) {
+    deserialize(object: any, triggerChangeEvent = true): boolean {
+        if (object.loadedSources && object.autoPoolOptions && object.autoEnabledSources) {
             this.autoPoolOptions = object.autoPoolOptions;
-            this.autoSourceEnabled = object.autoSourceEnabled;
+
+            //Clean up the autoEnabledSources list (if a source was deleted but not removed from this list, don't include it)
+            let cleanedAutoEnabledSources : {[id: string] : boolean} = {};
+            Object.keys(object.autoEnabledSources).forEach(sourceId => {
+                if (object.loadedSources[sourceId]) {
+                    cleanedAutoEnabledSources[sourceId] = object.autoEnabledSources[sourceId];
+                }
+            });
+            this.autoEnabledSources = cleanedAutoEnabledSources;
 
             //Initialize a ContentSource class for each source
             for (let sourceId in object.loadedSources) {

@@ -2,7 +2,8 @@ import fs from 'fs';
 
 export interface IJSONSavable {
     savePath: string;
-    deserialize(object: any, suppressChangeEvent: boolean): boolean //Loads the values from the JSON object into the current class
+    deserialize(object: any, triggerChangeEvent: boolean): boolean; //Loads the values from the JSON object into the current class
+    toJSON(): any; //Force the class to implement a custom toJSON method
 }
 
 export namespace JSONSavable {
@@ -31,7 +32,7 @@ export namespace JSONSavable {
                     fs.readFile(savePath, (error, data) => {
                         if (!error) {
                             try {
-                                if (!savable.deserialize(JSON.parse(data.toString()), true)) {
+                                if (!savable.deserialize(JSON.parse(data.toString()), false)) { //Don't trigger the form's change listeners
                                     console.warn("One or more properties from the save file (" + savePath + ") wasn't accepted. The file may be corrupted.");
                                 }
                                 resolve();

@@ -190,7 +190,7 @@ export class LocalDirectorySource extends ContentSource {
 
 export namespace LocalDirectorySource {
     export function fromAny(object: any) : LocalDirectorySource {
-        if (object.directory && object.shuffle && object.name) {
+        if (object.directory && object.name) {
             let newLocalSource = new LocalDirectorySource(object.name, object.directory);
             if (ContentSource.superFromAny(object, newLocalSource)) {
                 newLocalSource.setShuffle(object.shuffle);

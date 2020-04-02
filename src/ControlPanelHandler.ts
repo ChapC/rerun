@@ -4,12 +4,13 @@ import { UserEvent } from './events/UserEvent';
 import { ScheduleChange } from './playback/ScheduleChange';
 import { ContentBlock } from './playback/ContentBlock';
 import { MediaObject } from './playback/MediaObject';
-import { PlayerBasedEvent } from './events/UserEventTypes';
+import { PlayerEventLogic } from './events/UserEventTypes';
 import { ShowGraphicAction } from './events/UserEventActionTypes';
 import { LocalDirectorySource, mediaObjectFromVideoFile } from './contentsources/LocalDirectorySource';
 import { mediaObjectFromYoutube } from './contentsources/YoutubeChannelSource';
 import WebSocket from 'ws';
 import { ContentSource } from './contentsources/ContentSource';
+import JSONSavableForm from './persistance/JSONSavableForm';
 
 const uuidv4 = require('uuid/v4');
 
@@ -162,7 +163,7 @@ export default class ControlPanelHandler {
 
                 this.createContentBlockFromRequest(data.block).then((contentBlock: ContentBlock) => {
                     this.rerunState.player.enqueueBlock(contentBlock);
-                    respondWith({ message: 'Enqueued content block ' + data.block.id })
+                    respondWith({ message: 'Enqueued content block ' + data.block.id });
                 }).catch(error => {
                     console.error('Failed to enqueue new content block:', error);
                     respondWithError({ message: error });
@@ -172,16 +173,52 @@ export default class ControlPanelHandler {
             case 'getEvents': //Requested a list of UserEvents
                 respondWith(this.rerunState.userEventManager.getEvents());
                 break;
+            //TODO: These outline getters will need to change so that plug-ins can define their own actions/events
+            case 'getEventOutline':
+                respondWith(this.rerunState.userEventManager.getNewEvent().getOutline());
+                break;
+            case 'getEventLogicOutline': //Grabs the outline object for a UserEventLogic class
+                if (data && data.eventType) {
+                    let logic = this.rerunState.userEventManager.eventLogicTypes.getInstanceOf(data.eventType);
+                    if (logic != null) {
+                        respondWith(logic.getOutline());
+                    } else {
+                        respondWithError({ message: "Unknown event logic type '" + data.eventType + "'" })
+                    }
+                } else {
+                    respondWithError(invalidArgumentsError);
+                }
+                break;
+            case 'getEventActionOutline': //Grabs the outline object for a UserEventAction
+                if (data && data.actionType) {
+                    let action = this.rerunState.userEventManager.eventActionTypes.getInstanceOf(data.actionType);
+                    if (action != null) {
+                        respondWith(action.getOutline());
+                    } else {
+                        respondWithError({ message: "Unknown event action type '" + data.actionType + "'" })
+                    }
+                } else {
+                    respondWithError(invalidArgumentsError);
+                }
+                break;
             case 'createEvent':
-                if (data.type == null) {
+                if (!data) {
                     respondWithError(invalidArgumentsError);
                     break;
                 }
 
-                let newEvent = this.createUserEventFromRequest(data);
-                let newEventId = this.rerunState.userEventManager.addEvent(newEvent);
-                respondWith({ message: 'Created new event with id=' + newEventId });
-                this.sendAlert('setEventList', this.rerunState.userEventManager.getEvents());
+                let newEvent = this.rerunState.userEventManager.getNewEvent();
+
+                if (newEvent.deserialize(data)) {
+                    let eventId = this.rerunState.userEventManager.addEvent(newEvent);
+                    if (eventId) {
+                        respondWith({message: "Created event ID " + eventId});
+                    } else {
+                        respondWithError({ message: "Error while creating event"});
+                    }
+                } else {
+                    respondWithError({ message: "Failed to parse event"});
+                }
 
                 break;
             case 'updateEvent': //Request to update an existing userEvent
@@ -190,11 +227,14 @@ export default class ControlPanelHandler {
                     break;
                 }
 
-                let updatedEvent = this.createUserEventFromRequest(data.newEvent);
+                let updatedEvent = this.rerunState.userEventManager.getNewEvent();
 
-                this.rerunState.userEventManager.updateEvent(data.eventId, updatedEvent);
-                respondWith({ message: 'Updated event id=' + data.eventId });
-                this.sendAlert('setEventList', this.rerunState.userEventManager.getEvents());
+                if (updatedEvent.deserialize(data.newEvent)) {
+                    this.rerunState.userEventManager.updateEvent(data.eventId, updatedEvent);
+                    respondWith({message: "Updated event with ID " + data.eventId});
+                } else {
+                    respondWithError({ message: "Failed to parse event"});
+                }
                 break;
             case 'deleteEvent':
                 if (data.eventId == null) {
@@ -203,8 +243,9 @@ export default class ControlPanelHandler {
                 }
 
                 this.rerunState.userEventManager.removeEvent(data.eventId);
-                respondWith({ message: 'Removed event with id =' + data.eventId });
-                this.sendAlert('setEventList', this.rerunState.userEventManager.getEvents());
+
+                respondWith({ message: "Removed event with ID " + data.eventId});
+
                 break;
             case 'setEventEnabled': //Setting the enabled property of a UserEvent
                 if (data.eventId == null || data.enabled == null) {
@@ -214,7 +255,6 @@ export default class ControlPanelHandler {
 
                 this.rerunState.userEventManager.setEventEnabled(data.eventId, data.enabled);
                 respondWith({ message: (data.enabled ? 'Enabled' : 'Disabled') + ' event ID ' + data.eventId });
-                this.sendAlert('setEventList', this.rerunState.userEventManager.getEvents());
                 break;
             //Graphics events
             case 'getGraphicsPackages': //Requested a list of available graphics packages
@@ -403,37 +443,5 @@ export default class ControlPanelHandler {
                     reject('Unknown media type "' + requestedMedia.type + '"');
             }
         });
-    }
-
-    private createUserEventFromRequest(requestedEvent: any): UserEvent {
-        if (requestedEvent.type === 'Player') {
-            let action = this.createActionFromRequest(requestedEvent.action);
-            try {
-                let playerEvent = new PlayerBasedEvent(
-                    requestedEvent.name, this.rerunState.player, requestedEvent.targetPlayerEvent,
-                    requestedEvent.frequency, action, requestedEvent.eventOffset
-                );
-                return playerEvent;
-            } catch (err) {
-                console.error('Failed to create PlayerBasedEvent from request:', err);
-            }
-        } else {
-            console.warn('Could not create UserEvent for unsupported event type "' + requestedEvent.type + '"');
-            return requestedEvent;
-        }
-    }
-
-    private createActionFromRequest(requestedAction: any): UserEvent.Action {
-        if (requestedAction.type === 'GraphicEvent') {
-            try {
-                return new ShowGraphicAction(requestedAction.targetLayer,
-                    this.rerunState.graphicsManager.sendGraphicEvent, requestedAction.animInTime);
-            } catch (err) {
-                console.error('Failed to create GraphicEvent from request:', err);
-            }
-        } else {
-            console.warn('Could not create UserEvent action for unsupported action type "' + requestedAction.type + '"');
-            return requestedAction;
-        }
     }
 }
