@@ -25,7 +25,7 @@ export class Player extends MultiListenable {
     }
 
     private state : Player.PlaybackState = Player.PlaybackState.InBlock;
-    //Currently-playing block
+    
     //Called every 100ms whenever playback time changes
     private relTimeAlerted = -1;//Used so that relTime events are only fired once per second
     private progressTimerTick = (newTimeMs:number) => {

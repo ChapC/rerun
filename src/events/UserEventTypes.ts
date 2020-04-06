@@ -39,7 +39,7 @@ export class PlayerEventLogic extends UserEvent.Logic {
             this.listenerIds.push(this.player.on('relTime:end-' + Math.round(this.eventOffsetSecs.getValue()), (ev: any) => {
                 _this.frequencyCounter++;
                 if (_this.frequencyCounter >= _this.frequency.getValue()) {
-                    _this.action.execute();
+                    _this.triggerEvent();
                     _this.frequencyCounter = 0;
                 }
             }));
@@ -60,7 +60,7 @@ export class PlayerEventLogic extends UserEvent.Logic {
 
             //Execute the action once the player has paused
             this.listenerIds.push(this.player.on('paused', (ev: any) => {
-                _this.action.execute();
+                _this.triggerEvent();
             }));
             
             /*
