@@ -159,14 +159,14 @@ rerunState.startup.appendStep("Graphics packages", (rerunState, l) => {
     rerunState.graphicsManager = new GraphicManager(packagePath, rerunState.localIP, () => rerunState.player.getState(), app);
     
     //Serve up all the static files in the graphics package path (JS, images)
-    app.use(express.static(packagePath)); //TODO: Only serve the static files of the active package
+    app.use('/graphics', express.static(packagePath));
 
     return new Promise((resolve, reject) => {
         //Scan for GraphicsPackage definitions
         rerunState.graphicsManager.importPackages().then((packages) => {
             l.info('Imported (' + packages.length + ') graphics packages');
 
-            rerunState.graphicsManager.setActivePackage('FHTV graphics');
+            rerunState.graphicsManager.setActivePackage('Clean');
 
             resolve();
         }).catch(err => reject('Failed to import graphics packages: ' + err.toString()));
@@ -252,8 +252,8 @@ rerunState.startup.appendStep("Player", (rerunState, l) => {
     l.info('Configuring player instance...');
 
     //Use the title screen graphic as the default block (when nothing else is available)
-    const titleScreenGraphicName = 'Title screen';
-    const titleScreenGraphicLocation = new GraphicsLayerLocation('FHTV title slate');
+    const titleScreenGraphicName = 'Title slate';
+    const titleScreenGraphicLocation = new GraphicsLayerLocation('Title slate');
     const titleBlock = new ContentBlock('titleBlock', new MediaObject(MediaObject.MediaType.RerunGraphic, titleScreenGraphicName, titleScreenGraphicLocation, Number.POSITIVE_INFINITY));
 
     rerunState.player = new Player(rerunState.renderers, titleBlock);

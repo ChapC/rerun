@@ -63,7 +63,7 @@ export class GraphicManager {
             return; //The requested package is already active
         }
 
-        let targetPackage;
+        let targetPackage: GraphicPackage;
 
         for (let graphicPackage of this.availablePackages) {
             if (graphicPackage.packageName === packageName) {
@@ -76,9 +76,8 @@ export class GraphicManager {
             if (this.activePackage != null) {
                 //Tear down the express routes leading to the active package
                 for (let layer of this.activePackage.layers) {
-                    const layerUrl = '/layer/' + encodeURI(layer.name);
-                    removeRoute(layerUrl, this.expressApp);
-                    console.info('Tore down graphic layer "' + layer.name + '" at ' + layerUrl);
+                    removeRoute(getShortLayerURL(targetPackage, layer), this.expressApp);
+                    removeRoute(getLongLayerURL(targetPackage, layer), this.expressApp);
                 }
             }
 
@@ -86,11 +85,25 @@ export class GraphicManager {
 
             //Create express routes for each layer of this package
             for (let layer of this.activePackage.layers) {
-                const layerUrl = '/layer/' + encodeURI(layer.name);
-                this.expressApp.get(layerUrl, (req : Request, res : Response) => {
+                /*
+                Two routes are created for each layer - one full URL to the layer's folder, and one shortened URL for convenience.
+                eg. The layer "Small explosion" of package "Action effects" is located at "/graphics/Action effects pack/Small explosion/small_explosion.html".
+                Full URL is "/graphics/Action%20effects%20pack/Small%20explosion" -
+                    Note that it doesn't link to the actual HTML file. The response will use the modified HTML instead.
+                Short URL is "/g/actioneffectspack/smallexplosion" -
+                    This request will be redirected to the full url.
+                */
+
+                const fullLayerURL = getLongLayerURL(targetPackage, layer);
+                this.expressApp.get(fullLayerURL, (req: Request, res: Response) => {
                     res.send(layer.html);
                 });
-                console.info('Served graphic layer "' + layer.name + '" at ' + layerUrl);
+
+                const shortLayerURL = getShortLayerURL(targetPackage, layer);
+                this.expressApp.get(shortLayerURL, (req : Request, res : Response) => {
+                    res.redirect(fullLayerURL);                    
+                });
+                console.info('Served graphic layer "' + layer.name + '" at ' + shortLayerURL);
             }
 
         } else {
@@ -142,7 +155,7 @@ export class GraphicManager {
                     files.forEach((filePath) => {
                         let fileContents = fs.readFileSync(filePath).toString();
 
-                        let graphicPackage = GraphicPackage.createFromJSON(fileContents);
+                        let graphicPackage = GraphicPackage.createFromJSON(fileContents, path.dirname(filePath));
 
                         if (graphicPackage == null) {
                             console.warn('Could not import graphics package at ' + filePath)
@@ -211,11 +224,20 @@ function importGraphicHTML(pathToHTMLFile:string, localIP:string, layerName:stri
     return graphicDom.serialize();
 }
 
+export function getShortLayerURL(pkg: GraphicPackage, layer: GraphicLayer) {
+    return `/g/${encodeURIComponent(pkg.packageName.toLowerCase().replace(/\s/g, ''))}/${encodeURIComponent(layer.name.toLowerCase().replace(/\s/g, ''))}`
+}
+
+export function getLongLayerURL(pkg: GraphicPackage, layer: GraphicLayer) {
+    return `/${encodeURIComponent(pkg.rootFolderPath).replace('%5C', '/')}/${encodeURIComponent(path.dirname(layer.path))}/`
+}
+
 class GraphicPackage {
     packageName: string;
+    rootFolderPath: string;
     layers: GraphicLayer[];
 
-    static createFromJSON(json:string) : GraphicPackage {
+    static createFromJSON(json:string, rootFolderPath: string) : GraphicPackage {
         let parsed = JSON.parse(json);
         if (parsed == null) {
             return null;
@@ -246,6 +268,7 @@ class GraphicPackage {
             return null;
         }
 
+        pkg.rootFolderPath = rootFolderPath;
         return pkg;
     
     }

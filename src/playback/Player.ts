@@ -203,6 +203,7 @@ export class Player extends MultiListenable {
         this.setCurrentState(Player.PlaybackState.Loading);
     }
 
+    //TODO: Unload delay needs to be removed, probably at the same time as inbetween pauses
     goToDefaultBlock(unloadDelayMs:number = 0) {
         this.info('Jumping to default block');
         this.setCurrentBlockNow(this.defaultBlock, unloadDelayMs);
