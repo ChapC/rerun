@@ -42,26 +42,7 @@ export class Player extends MultiListenable {
         if (this.progressMs >= this.currentBlock.media.durationMs) {
             //The current content block is finished
             this.progressCounter.stop();
-
-            //Check if there are any inbetween pauses set
-            if (Object.keys(this.requestedPauses).length !== 0) {
-                //Find the longest requested pause and use that
-                let longestPause = new Player.Pause('', 0);
-                for (let pause of Object.values(this.requestedPauses)) {
-                    if (longestPause.remainingMs < pause.remainingMs) {
-                        longestPause = pause;
-                    }
-                }
-
-                //Start the pause countdown
-                this.activePause = longestPause;
-                this.info('Starting inbetween pause (source=' + longestPause.source + ',length=' + longestPause.remainingMs + 'ms)');
-                this.fireEvent('paused', this.activePause);
-                this.attemptNextBlockPreload(true); //Force preload the next block (we can force b/c we know nothing is playing)
-                this.activePauseCounter.countDownFrom(this.activePause.remainingMs);
-            } else {
-                this.progressQueue(); //No pauses, progress immediately
-            }
+            this.progressQueue();
         }
     }
 
@@ -147,11 +128,6 @@ export class Player extends MultiListenable {
 
     //Take the next item out of the queue and play it
     progressQueue() {
-        if (this.activePause != null) {
-            this.info('Tried to set progress queue while pause active');
-            return;
-        }
-
         let nextBlock = this.pullNextBlock();
         if (nextBlock == null) {
             //No next block - show the default block
@@ -177,12 +153,6 @@ export class Player extends MultiListenable {
 
     //Immediately set and play the current content block. Does not affect the queue.
     setCurrentBlockNow(newBlock:ContentBlock, unloadDelayMs: number = 0) {
-        if (this.activePause != null) {
-            //TODO: This should be allowed, it should just stop the pause early and play newBlock
-            this.info('Tried to set current block while pause active');
-            return;
-        }
-
         //Load the new block's media into its renderer
         this.progressCounter.stop();
         let blockRenderer = this.rendererMap[newBlock.media.location.getType()].renderer;
@@ -210,11 +180,6 @@ export class Player extends MultiListenable {
     }
 
     restartCurrentBlock() {
-        if (this.activePause != null) {
-            this.info('Tried to restart current block while pause active');
-            return;
-        }
-
         this.info('Restarting current block');
         let activeRenderer = this.rendererMap[this.currentBlock.media.location.getType()].renderer;
         activeRenderer.restartMedia().then(() => this.startCurrentBlockTimer(this.currentBlock)).catch((error) => error('Error while restarting media: ', error));
@@ -293,53 +258,7 @@ export class Player extends MultiListenable {
     }
 
     getState() : PlayerState {
-        return new PlayerState(this.currentBlock, this.progressMs, this.queue, this.activePause, this.state);
-    }
-
-    //Inbetween pause - A pause can be specified that creates a delay in-between each ContentBlock
-    private pauseCounterTick = (newPauseTime:number) => {
-        if (this.activePause == null) {
-            //The pause has been cancelled
-            this.clearPause();
-            this.info('Inbetween pause cancelled');
-            this.progressQueue();
-            return;
-        }
-
-        this.activePause.remainingMs = newPauseTime;
-
-        if (this.activePause.remainingMs <= 0) {
-            //The pause has finished
-            this.clearPause();
-            this.progressQueue();
-        }
-    }
-
-    private activePause: Player.Pause = null; //null means no pause active
-    private activePauseCounter : IntervalMillisCounter = new IntervalMillisCounter(500, this.pauseCounterTick);
-    private requestedPauses: {[id: number] : Player.Pause} = {}; //If multiple pause requests are active, the longest one is used
-    private pauseIdCounter = 0;
-
-    private clearPause() {
-        this.activePauseCounter.stop();
-        this.activePause = null;
-    }
-
-    //Adds the pause and returns its ID
-    addInbetweenPause(pause: Player.Pause) : number {
-        console.info('Added inbetween pause ' + pause.remainingMs + 'ms');
-        let pauseId = this.pauseIdCounter++;
-        pause.id = pauseId;
-        this.requestedPauses[pauseId] = pause;
-        return pauseId;
-    }
-
-    removeInbetweenPause(pauseId: number) {
-        delete this.requestedPauses[pauseId];
-        //If this pause is currently active, remove it there too
-        if (this.activePause && this.activePause.id === pauseId) {
-            this.activePause = null;
-        }
+        return new PlayerState(this.currentBlock, this.progressMs, this.queue, this.state);
     }
 
 
@@ -365,6 +284,5 @@ export namespace Player {
 }
 
 export class PlayerState {
-    constructor(public currentBlock: ContentBlock, public progressMs: number, public queue:ContentBlock[], 
-        public pauseReason:Player.Pause, public playbackState:Player.PlaybackState) {}
+    constructor(public currentBlock: ContentBlock, public progressMs: number, public queue:ContentBlock[], public playbackState:Player.PlaybackState) {}
 }

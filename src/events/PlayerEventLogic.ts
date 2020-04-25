@@ -1,21 +1,18 @@
 import { UserEvent } from './UserEvent';
-import { ShowGraphicAction } from './UserEventActionTypes';
 import { Player } from '../playback/Player';
-import { StringSelectFormProperty, IntegerFormProperty, NumberFormProperty } from '../persistance/FormProperty';
+import { StringSelectProperty, IntegerProperty, NumberProperty } from '../persistance/ValidatedProperty';
 
 //An event that triggers when something playback-related happens (eg. content block starts, finishes)
 export class PlayerEventLogic extends UserEvent.Logic {
     //The player event this user event will be triggered by
-    readonly targetPlayerEvent = new StringSelectFormProperty("Position", PlayerEventLogic.TargetEvent, PlayerEventLogic.TargetEvent.PlaybackStart); 
+    readonly targetPlayerEvent = new StringSelectProperty("Position", PlayerEventLogic.TargetEvent, PlayerEventLogic.TargetEvent.PlaybackStart); 
     //Used to offset from the start or end (eg. 5 seconds after start or 3 seconds before end)
-    readonly eventOffsetSecs = new NumberFormProperty("Event offset", 0);
-    readonly frequency = new IntegerFormProperty("Frequency", 1); //Trigger this event every n times targetEvent is fired
+    readonly eventOffsetSecs = new NumberProperty("Event offset", 0);
+    readonly frequency = new IntegerProperty("Frequency", 1); //Trigger this event every n times targetEvent is fired
 
     private frequencyCounter = 0;
-    private pauseNow : boolean = false;
-    //Player listener Ids and pause id, used to cancel them when disable() is called
+    //Player listener Ids stored to cancel them when disable() is called
     private listenerIds: number[] = [];
-    private pauseId: number;
 
     private triggerEvent : () => void;
     constructor(private player: Player) {
@@ -46,22 +43,7 @@ export class PlayerEventLogic extends UserEvent.Logic {
         } else if (this.targetPlayerEvent.getValue() === PlayerEventLogic.TargetEvent.InBetweenPlayback) {
             //Run this action in-between content blocks
 
-            //Request an inbetween pause [eventOffset] seconds long every [frequency] videos
-            this.listenerIds.push(this.player.on('relTime:start-0', (ev: any) => {
-                _this.frequencyCounter +=1;
-                if (_this.frequencyCounter >= _this.frequency.getValue()) {
-                    _this.pauseId = _this.player.addInbetweenPause(new Player.Pause('Event - ' + _this.name, _this.eventOffsetSecs.getValue() * 1000));
-                    _this.frequencyCounter = 0;
-                    _this.pauseNow = true;
-                } else {
-                    _this.pauseNow = false;
-                }
-            }));
-
-            //Execute the action once the player has paused
-            this.listenerIds.push(this.player.on('paused', (ev: any) => {
-                _this.triggerEvent();
-            }));
+            console.warn('Inbetween block events not yet implemented');
             
             /*
             A pretty big change to the Player will be required to get this to work.
@@ -98,9 +80,6 @@ export class PlayerEventLogic extends UserEvent.Logic {
             this.player.off(listenerId);
         }
         this.listenerIds = [];
-        if (this.pauseId != null) {
-            this.player.removeInbetweenPause(this.pauseId);
-        }
     }
 
     setTriggerCallback(callback: () => void) {
