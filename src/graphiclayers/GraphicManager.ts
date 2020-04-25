@@ -3,6 +3,7 @@ import WebSocket = require("ws");
 import { PlayerState } from "../playback/Player";
 import { MediaObject } from "../playback/MediaObject";
 import { Request, Response } from "express";
+import { Tree } from "../helpers/Tree";
 const recursive = require("recursive-readdir");
 const path = require('path');
 const jsdom = require("jsdom");
@@ -12,13 +13,13 @@ const initRerunReference = require('./graphicLayerInjection').script;
 
 export class GraphicManager {
     private graphicsFolder : PathLike; //The root folder to scan for graphics packages
-    private availablePackages : GraphicPackage[]; //The list of graphics packages found in graphicsFolder
+    //All graphics packages and layers. The first layer of the tree is packages, the second is layers.
+    readonly graphicsTree: Tree<GraphicPackage, GraphicLayer> = new Tree(new Tree.BranchNode('Graphics packages'));
+
     private serverAddress : string;
     private connectedWebsockets : {[layerName: string] : WebSocket[]} = {};
     private fetchPlayerState : () => PlayerState;
     private expressApp : any;
-
-    private activePackage : GraphicPackage; //The graphics package currently in use (selected by the user)
 
     constructor(graphicsFolder: PathLike, serverAddress: string, getPlayerState: () => PlayerState, expressApp: any) {
         this.graphicsFolder = graphicsFolder;
@@ -58,59 +59,6 @@ export class GraphicManager {
         }
     }
 
-    setActivePackage = (packageName: string) => {
-        if (this.activePackage != null && this.activePackage.packageName === packageName) {
-            return; //The requested package is already active
-        }
-
-        let targetPackage: GraphicPackage;
-
-        for (let graphicPackage of this.availablePackages) {
-            if (graphicPackage.packageName === packageName) {
-                targetPackage = graphicPackage;
-                break;
-            }
-        }
-
-        if (targetPackage != null) {
-            if (this.activePackage != null) {
-                //Tear down the express routes leading to the active package
-                for (let layer of this.activePackage.layers) {
-                    removeRoute(getShortLayerURL(targetPackage, layer), this.expressApp);
-                    removeRoute(getLongLayerURL(targetPackage, layer), this.expressApp);
-                }
-            }
-
-            this.activePackage = targetPackage;
-
-            //Create express routes for each layer of this package
-            for (let layer of this.activePackage.layers) {
-                /*
-                Two routes are created for each layer - one full URL to the layer's folder, and one shortened URL for convenience.
-                eg. The layer "Small explosion" of package "Action effects" is located at "/graphics/Action effects pack/Small explosion/small_explosion.html".
-                Full URL is "/graphics/Action%20effects%20pack/Small%20explosion" -
-                    Note that it doesn't link to the actual HTML file. The response will use the modified HTML instead.
-                Short URL is "/g/actioneffectspack/smallexplosion" -
-                    This request will be redirected to the full url.
-                */
-
-                const fullLayerURL = getLongLayerURL(targetPackage, layer);
-                this.expressApp.get(fullLayerURL, (req: Request, res: Response) => {
-                    res.send(layer.html);
-                });
-
-                const shortLayerURL = getShortLayerURL(targetPackage, layer);
-                this.expressApp.get(shortLayerURL, (req : Request, res : Response) => {
-                    res.redirect(fullLayerURL);                    
-                });
-                console.info('Served graphic layer "' + layer.name + '" at ' + shortLayerURL);
-            }
-
-        } else {
-            console.error('Could not set active packge - There is no available package called "' + packageName + '"');
-        }
-    }
-
     //Registers a websocket to receive graphic events for the target layer
     addWebsocket(socket: WebSocket, forLayerName:string) {
         let socketList = this.connectedWebsockets[forLayerName];
@@ -141,9 +89,9 @@ export class GraphicManager {
         }
     }
 
+    //Scan the graphics folder for packages and set 'em up
     importPackages() : Promise<GraphicPackage[]> {
-        //Scan for graphics packages
-        this.availablePackages = [];
+        this.graphicsTree.rootNode.clearChildren(); //Clear the tree
 
         //Only search for graphic packages (files called "graphicpackage.json")
         const graphicPackagesOnly = (file:string, stats:Stats) => !stats.isDirectory() && path.basename(file) != 'graphicspackage.json';
@@ -151,6 +99,9 @@ export class GraphicManager {
         return new Promise((resolve, reject) => {
             recursive(this.graphicsFolder, [graphicPackagesOnly], (err:Error, files:string[]) => {
                 if (!err) {
+                    let readyPackages : GraphicPackage[] = [];
+                    let readyLayers : GraphicLayer[] = [];
+
                     //files is a list of "graphicpackage.json" file paths
                     files.forEach((filePath) => {
                         let fileContents = fs.readFileSync(filePath).toString();
@@ -162,16 +113,26 @@ export class GraphicManager {
                             return;
                         }
         
-                        this.availablePackages.push(graphicPackage);
+                        readyPackages.push(graphicPackage);
                         
                         //Import the HTML of the package's layers and inject the rerun connection script into them
                         for (let layer of graphicPackage.layers) {
                             let modifiedHTML = importGraphicHTML(path.join(path.dirname(filePath), layer.path), this.serverAddress, layer.name);
                             layer.html = modifiedHTML;
+                            readyLayers.push(layer);
                         }
 
                     });
-                    resolve(this.availablePackages);
+
+                    this.deployLayerRoutes(readyLayers); //Create the URLs for each layer
+
+                    //Build the graphics tree
+                    this.graphicsTree.rootNode.setChildProvider(() => readyPackages.map((pkg) => 
+                        new Tree.BranchNode(pkg.packageName, pkg, () => pkg.layers.map(
+                            (layer) => new Tree.LeafNode(layer.name, layer)))
+                    ));
+
+                    resolve(readyPackages);
                 } else {
                     reject(err);
                 }
@@ -179,12 +140,42 @@ export class GraphicManager {
         });
     }
 
-    getAvailablePackages() : GraphicPackage[] {
-        return this.availablePackages;
+    private activeLayerRoutes: string[] = [];
+
+    private deployLayerRoutes(layers: GraphicLayer[]) {
+        //Tear down any existing layer routes
+        this.activeLayerRoutes.map((route) => removeRoute(route, this.expressApp));
+        this.activeLayerRoutes = [];
+
+        //Create express routes for each layer
+        for (let layer of layers) {
+            /*
+            Two routes are created for each layer - one full URL to the layer's folder, and one shortened URL for convenience.
+            eg. The layer "Small explosion" of package "Action effects" is located at "/graphics/Action effects pack/Small explosion/small_explosion.html".
+            Full URL is "/graphics/Action%20effects%20pack/Small%20explosion" -
+                Note that it doesn't link to the actual HTML file. The response will use the modified HTML instead.
+            Short URL is "/g/actioneffectspack/smallexplosion" -
+                This request will be redirected to the full url.
+            */
+
+            const fullLayerURL = getLongLayerURL(layer);
+            this.expressApp.get(fullLayerURL, (req: Request, res: Response) => {
+                res.send(layer.html);
+            });
+
+            const shortLayerURL = getShortLayerURL(layer);
+            this.expressApp.get(shortLayerURL, (req : Request, res : Response) => {
+                res.redirect(fullLayerURL);                    
+            });
+
+            this.activeLayerRoutes.push(fullLayerURL);
+            this.activeLayerRoutes.push(shortLayerURL);
+            console.info('Served graphic layer "' + layer.name + '" at ' + shortLayerURL);
+        }
     }
 
-    getActivePackage() : GraphicPackage {
-        return this.activePackage;
+    getAvailablePackages() : GraphicPackage[] {
+        return this.graphicsTree.rootNode.getChildren().map((packageNode) => packageNode.value as GraphicPackage);
     }
 }
 
@@ -224,12 +215,12 @@ function importGraphicHTML(pathToHTMLFile:string, localIP:string, layerName:stri
     return graphicDom.serialize();
 }
 
-export function getShortLayerURL(pkg: GraphicPackage, layer: GraphicLayer) {
-    return `/g/${encodeURIComponent(pkg.packageName.toLowerCase().replace(/\s/g, ''))}/${encodeURIComponent(layer.name.toLowerCase().replace(/\s/g, ''))}`
+export function getShortLayerURL(layer: GraphicLayer) {
+    return `/g/${encodeURIComponent(layer.parentPackage.packageName.toLowerCase().replace(/\s/g, ''))}/${encodeURIComponent(layer.name.toLowerCase().replace(/\s/g, ''))}`;
 }
 
-export function getLongLayerURL(pkg: GraphicPackage, layer: GraphicLayer) {
-    return `/${encodeURIComponent(pkg.rootFolderPath).replace('%5C', '/')}/${encodeURIComponent(path.dirname(layer.path))}/`
+export function getLongLayerURL(layer: GraphicLayer) {
+    return `/${encodeURIComponent(layer.parentPackage.rootFolderPath).replace('%5C', '/')}/${encodeURIComponent(path.dirname(layer.path))}/`;
 }
 
 class GraphicPackage {
@@ -258,7 +249,7 @@ class GraphicPackage {
         try {
             //Read in the GraphicLayers
             for (let layerObj of parsed.layers) {
-                const gLayer = GraphicLayer.fromObject(layerObj);
+                const gLayer = GraphicLayer.fromObject(layerObj, pkg);
                 if (gLayer != null) {
                     pkg.layers.push(gLayer);
                 }
@@ -280,17 +271,17 @@ export class GraphicLayer {
     animationTimings: {[eventName: string] : number}; //Map of [graphic event : animation duration]
     html: string; //Processed html string
 
-    constructor(path:string, name:string) {
+    constructor(path:string, name:string, readonly parentPackage: GraphicPackage) {
         this.path = path;
         this.name = name;
         this.animationTimings = {};
     }
 
-    static fromObject(object:any) : GraphicLayer {
+    static fromObject(object:any, parent: GraphicPackage) : GraphicLayer {
         if (!object.name || !object.path) {
             return null;
         }
-        let layer = new GraphicLayer(object.path, object.name);
+        let layer = new GraphicLayer(object.path, object.name, parent);
 
         //Animation timings are optional
         if (object.timings) {
@@ -307,4 +298,8 @@ export class GraphicLayer {
             name: this.name, path: this.path, animationTimings: this.animationTimings
         }
     }
+}
+
+export class GrpahicLayerReference {
+    constructor(readonly packageName: string, readonly layerName: string) {};
 }

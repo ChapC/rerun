@@ -1,9 +1,17 @@
 import { SingleListenable } from "../helpers/SingleListenable";
-import JSONSavableForm from "./JSONSavableForm";
+import SavablePropertyGroup from "./SavablePropertyGroup";
 import SubTypeStore from "../helpers/SubTypeStore";
+import { Tree } from "../helpers/Tree";
+const uuidv4 = require('uuid/v4');
 
-//Used to send form properties to the client and validate their return values
-export abstract class FormProperty<T> extends SingleListenable<T> {
+/**
+ * Base class for a getter/setter with built-in value and type validation. 
+ * Call trySetValue() with an any to attempt to set the property's value and getValue() to access it.
+ * Changes are observable via the SingleListenable extension.
+ * 
+ * @remarks Used when creating forms for the client-side (where a control is defined for each type of property) and for type-aware serialization.
+ */
+export abstract class ValidatedProperty<T> extends SingleListenable<T> {
     protected type: string;
     private value: T;
 
@@ -50,7 +58,7 @@ export abstract class FormProperty<T> extends SingleListenable<T> {
 }
 
 //Property types
-export class StringFormProperty extends FormProperty<string> {
+export class StringProperty extends ValidatedProperty<string> {
     type = 'string';
     static type = 'string';
 
@@ -66,7 +74,7 @@ export class StringFormProperty extends FormProperty<string> {
 /**
  * Property accepting integers only.
  */
-export class IntegerFormProperty extends FormProperty<number> {
+export class IntegerProperty extends ValidatedProperty<number> {
     type = 'int';
 
     protected acceptAny(value: any) : number {
@@ -81,7 +89,7 @@ export class IntegerFormProperty extends FormProperty<number> {
 /**
  * Property accepting any kind of number.
  */
-export class NumberFormProperty extends FormProperty<number> {
+export class NumberProperty extends ValidatedProperty<number> {
     type = 'number';
 
     protected acceptAny(value: any) : number {
@@ -93,7 +101,7 @@ export class NumberFormProperty extends FormProperty<number> {
     }   
 }
 
-export class URLFormProperty extends FormProperty<string> {
+export class URLProperty extends ValidatedProperty<string> {
     private urlRegex = new RegExp(/[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/);
     type = 'url';
 
@@ -107,9 +115,9 @@ export class URLFormProperty extends FormProperty<string> {
 }
 
 //A string from a list of valid options
-export class StringSelectFormProperty extends StringFormProperty {
+export class StringSelectProperty extends StringProperty {
     static type = 'select-string'
-    type = StringSelectFormProperty.type;
+    type = StringSelectProperty.type;
 
     private options : string[] = [];
     
@@ -157,11 +165,13 @@ export class StringSelectFormProperty extends StringFormProperty {
 }
 
 /**
- * Works with an alias from a StringFormProperty to store one instance of T from a SubTypeStore.
+ * Stores a SavablePropertyGroup and allows setting of the whole object at once.
+ * 
+ * @remarks Allows SavablePropertyGroups to be nested within another. See SubTypeStore for details.
  */
-export class SubFormProperty<T extends JSONSavableForm> extends FormProperty<T> {
-    type = 'subform';
-    constructor(name: string, private typeAlias: StringFormProperty, private fromTypeStore: SubTypeStore<T>) {
+export class SubGroupProperty<T extends SavablePropertyGroup> extends ValidatedProperty<T> {
+    type = 'subgroup';
+    constructor(name: string, private typeAlias: StringProperty, private fromTypeStore: SubTypeStore<T>) {
         super(name);
     }
 
@@ -179,7 +189,7 @@ export class SubFormProperty<T extends JSONSavableForm> extends FormProperty<T> 
     }
 }
 
-export class IPAddressFormProperty extends FormProperty<string> {
+export class IPAddressProperty extends ValidatedProperty<string> {
     type = 'ip';
 
     protected acceptAny(value: any) : string {
@@ -208,6 +218,69 @@ export class IPAddressFormProperty extends FormProperty<string> {
           return ipAndPort[1] < 65535;
         } else {
           return true;
+        }
+    }
+}
+
+/**
+ * Accepts a "/" separated path string that points to a node within a tree.
+ */
+export class TreePathProperty extends ValidatedProperty<string> {
+    type = 'treepath';
+    readonly id : string;
+
+    constructor(name: string, readonly tree: Tree<any, any>) {
+        super(name, '');
+        this.id = uuidv4();
+        TreePathStore.registerTreePathProperty(this);
+    }
+
+    protected acceptAny(value: any) : string {
+        if ((typeof value === 'string')) {
+            let pathArray = value.split('/').filter((str: string) => str != "");
+            //Verify that the provided path leads to a valid node
+            if (this.tree.getNodeAtPath(pathArray) != null) {
+                return value;
+            } else {
+                return null;
+            }
+        } else {
+            return null;
+        }
+    }
+
+    toJSON() {
+        return {
+            ...super.toJSON(), id: this.id
+        }
+    }
+}
+
+//TODO: This must be replaced when ControlPanelHandler is redided in a gooder way
+export class TreePathStore {
+    private static instance: TreePathStore;
+
+    static getInstance() : TreePathStore {
+        if (this.instance == null) {
+            this.instance = new TreePathStore();
+        }
+        return this.instance;
+    }
+    private constructor() {};
+
+    private static registeredProperties : {[id: string] : TreePathProperty} = {};
+
+    static registerTreePathProperty(p : TreePathProperty) {
+        this.registeredProperties[p.id] = p;
+    }
+
+    //Handles an incoming request from a client
+    static getTreeNodeFor(propertyId: string, nodePath: string[]) {
+        let targetProperty = this.registeredProperties[propertyId];
+        if (targetProperty != null) {
+            return targetProperty.tree.getNodeAtPath(nodePath);
+        } else {
+            return null;
         }
     }
 }

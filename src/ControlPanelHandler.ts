@@ -4,13 +4,15 @@ import { UserEvent } from './events/UserEvent';
 import { ScheduleChange } from './playback/ScheduleChange';
 import { ContentBlock } from './playback/ContentBlock';
 import { MediaObject } from './playback/MediaObject';
-import { PlayerEventLogic } from './events/UserEventTypes';
+import { PlayerEventLogic } from './events/PlayerEventLogic';
 import { ShowGraphicAction } from './events/UserEventActionTypes';
 import { LocalDirectorySource, mediaObjectFromVideoFile } from './contentsources/LocalDirectorySource';
 import { mediaObjectFromYoutube } from './contentsources/YoutubeChannelSource';
 import WebSocket from 'ws';
 import { ContentSource } from './contentsources/ContentSource';
-import JSONSavableForm from './persistance/JSONSavableForm';
+import SavablePropertyGroup from './persistance/SavablePropertyGroup';
+import { MultiListenable } from './helpers/MultiListenable';
+import { TreePathStore } from './persistance/ValidatedProperty';
 
 const uuidv4 = require('uuid/v4');
 
@@ -362,8 +364,24 @@ export default class ControlPanelHandler {
                     respondWithError(error);
                 }
                 break;
+            case 'getTreeNode':
+                if (data.propertyId == null || data.nodePath == null) {
+                    respondWithError(invalidArgumentsError);
+                    break;
+                }
 
+                let pathArray = data.nodePath.split('/').filter((el: string) => el.length > 0);
+                
+                let targetNode = TreePathStore.getTreeNodeFor(data.propertyId, pathArray);
+
+                if (targetNode != null) {
+                    respondWith(targetNode);
+                } else {
+                    respondWithError({ message: 'InvalidPath' });
+                }
+                break;
             default:
+                //Check to see if a custom handler has been registered for this request - TODO: Move all of the handlers out of this file
                 console.info('Unknown control panel request "' + requestName + '"');
                 respondWithError({ message: 'Unknown request "' + requestName + '"' })
         }

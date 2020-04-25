@@ -1,9 +1,9 @@
-import { IPAddressFormProperty, StringFormProperty } from "./persistance/FormProperty";
-import JSONSavableForm from "./persistance/JSONSavableForm";
+import { IPAddressProperty, StringProperty } from "./persistance/ValidatedProperty";
+import SavablePropertyGroup from "./persistance/SavablePropertyGroup";
 import { RerunStateObject } from ".";
 
-export default class RerunUserSettings extends JSONSavableForm {
-    readonly obsAddress : IPAddressFormProperty = new IPAddressFormProperty("OBS websocket address", "localhost:4444");
+export default class RerunUserSettings extends SavablePropertyGroup {
+    readonly obsAddress : IPAddressProperty = new IPAddressProperty("OBS websocket address", "localhost:4444");
 
     constructor(savePath:string, rerunState: RerunStateObject) {
         super(savePath);

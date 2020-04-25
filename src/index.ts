@@ -23,7 +23,7 @@ import RerunUserSettings from "./RerunUserSettings";
 import { AlertContainer } from "./helpers/AlertContainer";
 import StartupSteps from "./StartupSteps";
 import { JSONSavable } from "./persistance/JSONSavable";
-import { PlayerEventLogic } from "./events/UserEventTypes";
+import { PlayerEventLogic } from "./events/PlayerEventLogic";
 import { ShowGraphicAction } from "./events/UserEventActionTypes";
 
 const express = require('express');
@@ -165,9 +165,6 @@ rerunState.startup.appendStep("Graphics packages", (rerunState, l) => {
         //Scan for GraphicsPackage definitions
         rerunState.graphicsManager.importPackages().then((packages) => {
             l.info('Imported (' + packages.length + ') graphics packages');
-
-            rerunState.graphicsManager.setActivePackage('Clean');
-
             resolve();
         }).catch(err => reject('Failed to import graphics packages: ' + err.toString()));
     });

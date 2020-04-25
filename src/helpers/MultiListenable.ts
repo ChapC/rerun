@@ -56,6 +56,10 @@ export abstract class MultiListenable {
         this.eventListeners = {};
     }
 
+    isListenerFor(eventName: string) : boolean {
+        return this.eventListeners[eventName] != null;
+    }
+
     protected fireEvent(eventName:string, eventData:any) {
         let callbackList = this.eventListeners[eventName];
         if (callbackList != null) {

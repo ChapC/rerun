@@ -1,16 +1,16 @@
-import JSONSavableForm from '../persistance/JSONSavableForm';
-import { StringSelectFormProperty, StringFormProperty, SubFormProperty } from '../persistance/FormProperty';
+import SavablePropertyGroup from '../persistance/SavablePropertyGroup';
+import { StringSelectProperty, StringProperty, SubGroupProperty } from '../persistance/ValidatedProperty';
 import SubTypeStore from '../helpers/SubTypeStore';
 
 //A user-defined event
-export class UserEvent extends JSONSavableForm {
-    readonly name = new StringFormProperty("Name", "New event");
+export class UserEvent extends SavablePropertyGroup {
+    readonly name = new StringProperty("Name", "New event");
 
-    readonly logicType = new StringSelectFormProperty("Event type");
-    readonly logic = new SubFormProperty("Logic", this.logicType, this.logicTypes);
-
-    readonly actionType = new StringSelectFormProperty("Action");
-    readonly action = new SubFormProperty("Action", this.actionType, this.actionTypes);
+    readonly logicType = new StringSelectProperty("Event type");
+    readonly logic = new SubGroupProperty<UserEvent.Logic>("Logic", this.logicType, this.logicTypes);
+ 
+    readonly actionType = new StringSelectProperty("Action");
+    readonly action = new SubGroupProperty<UserEvent.Action>("Action", this.actionType, this.actionTypes);
 
     constructor(private logicTypes: SubTypeStore<UserEvent.Logic>, private actionTypes: SubTypeStore<UserEvent.Action>) {
         super(null); //UserEvents are not saved individually. UserEventManager defines the save path
@@ -33,7 +33,7 @@ export class UserEvent extends JSONSavableForm {
 
 export namespace UserEvent {
     //The actual logic of the UserEvent
-    export abstract class Logic extends JSONSavableForm {
+    export abstract class Logic extends SavablePropertyGroup {
         //Called when the user switches the event on or off
         abstract enable() : void;
         abstract disable() : void;
@@ -45,7 +45,7 @@ export namespace UserEvent {
         abstract setTriggerCallback(onTrigger: () => void) : void;
     }
 
-    export abstract class Action extends JSONSavableForm {
+    export abstract class Action extends SavablePropertyGroup {
         abstract execute() : void;
 
         constructor(readonly actionType: string) {
