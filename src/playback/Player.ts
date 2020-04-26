@@ -4,6 +4,7 @@ import {ContentRenderer} from './renderers/ContentRenderer';
 import {ContentTypeRendererMap} from '../index';
 import {IntervalMillisCounter} from '../helpers/IntervalMillisCounter';
 import {MultiListenable} from '../helpers/MultiListenable';
+import PrefixedLogger from '../helpers/PrefixedLogger';
 const colors = require('colors');
 
 /* Events
@@ -13,6 +14,7 @@ const colors = require('colors');
 *   - "relTime:[start/end]-[n]": Fired at (or as close as possible to) [n] seconds after the start/before the end.
 */
 export class Player extends MultiListenable {
+    private log: PrefixedLogger = new PrefixedLogger("Player");
     private rendererMap: ContentTypeRendererMap;
     private defaultBlock: ContentBlock;
 
@@ -87,12 +89,12 @@ export class Player extends MultiListenable {
         }
 
         if (index == null) {
-            this.warn("Content block update failed: No block with id = " + blockId);
+            this.log.warn("Content block update failed: No block with id = " + blockId);
             return;
         }
 
         this.queue[index] = newBlock;
-        this.info('Updated block ' + newBlock.id);
+        this.log.info('Updated block ' + newBlock.id);
 
         if (index === 0) {
             //Preload this block
@@ -134,7 +136,7 @@ export class Player extends MultiListenable {
             nextBlock = this.defaultBlock;
         }
 
-        this.info('Progressing to next queued ContentBlock...');
+        this.log.info('Progressing to next queued ContentBlock...');
 
         let targetRenderer = this.rendererMap[nextBlock.media.location.getType()].renderer;
 
@@ -143,10 +145,10 @@ export class Player extends MultiListenable {
             this.focusRenderer(targetRenderer);
             targetRenderer.play().then(() => {
                 this.startCurrentBlockTimer(nextBlock);
-                this.info('Started new ContentBlock "' + nextBlock.media.name + '"');                
+                this.log.info('Started new ContentBlock "' + nextBlock.media.name + '"');                
                 this.attemptNextBlockPreload();
-            }).catch(error => this.error('Error while starting playback: ', error));
-        }).catch(error => this.error('Error while loading media: ', error));
+            }).catch(error => this.log.error('Error while starting playback: ', error));
+        }).catch(error => this.log.error('Error while loading media: ', error));
 
         this.setCurrentState(Player.PlaybackState.Loading);
     }
@@ -158,29 +160,29 @@ export class Player extends MultiListenable {
         let blockRenderer = this.rendererMap[newBlock.media.location.getType()].renderer;
 
         if (blockRenderer == null) {
-            this.warn('No compatible renderer for media type ' + newBlock.media.type);
+            this.log.warn('No compatible renderer for media type ' + newBlock.media.type);
             return;
         }
 
         blockRenderer.loadMedia(newBlock.media).then(() => {
             blockRenderer.play().then(() => {
                 this.startCurrentBlockTimer(newBlock);
-                this.info('Set current block to "' + newBlock.media.name + '"');
+                this.log.info('Set current block to "' + newBlock.media.name + '"');
                 this.focusRenderer(blockRenderer, unloadDelayMs).then(() => this.attemptNextBlockPreload());
-            }).catch(error => this.error('Error while starting playback: ', error));
-        }).catch(error => this.error('Error while loading media: ', error));
+            }).catch(error => this.log.error('Error while starting playback: ', error));
+        }).catch(error => this.log.error('Error while loading media: ', error));
 
         this.setCurrentState(Player.PlaybackState.Loading);
     }
 
     //TODO: Unload delay needs to be removed, probably at the same time as inbetween pauses
     goToDefaultBlock(unloadDelayMs:number = 0) {
-        this.info('Jumping to default block');
+        this.log.info('Jumping to default block');
         this.setCurrentBlockNow(this.defaultBlock, unloadDelayMs);
     }
 
     restartCurrentBlock() {
-        this.info('Restarting current block');
+        this.log.info('Restarting current block');
         let activeRenderer = this.rendererMap[this.currentBlock.media.location.getType()].renderer;
         activeRenderer.restartMedia().then(() => this.startCurrentBlockTimer(this.currentBlock)).catch((error) => error('Error while restarting media: ', error));
     }
@@ -236,7 +238,7 @@ export class Player extends MultiListenable {
             }
         }
         
-        this.info('Preloading the next block (' + nextBlock.media.name + ')');
+        this.log.info('Preloading the next block (' + nextBlock.media.name + ')');
 
         if (targetRenderer.getLoadedMedia() != null) {
             //If the renderer already has media loaded, unload it first
@@ -259,19 +261,6 @@ export class Player extends MultiListenable {
 
     getState() : PlayerState {
         return new PlayerState(this.currentBlock, this.progressMs, this.queue, this.state);
-    }
-
-
-    info(message:string) : void {
-        console.info('[Player] ' + message);
-    }
-
-    warn(message:string) : void {
-        console.warn(colors.yellow('[Player] WARNING - ' + message));
-    }
-    
-    error(message:string, obj:any) : void {
-        console.error(colors.red(message), obj);
     }
 }
 
