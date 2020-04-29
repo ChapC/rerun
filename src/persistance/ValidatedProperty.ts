@@ -2,6 +2,8 @@ import { SingleListenable } from "../helpers/SingleListenable";
 import SavablePropertyGroup from "./SavablePropertyGroup";
 import SubTypeStore from "../helpers/SubTypeStore";
 import { Tree } from "../helpers/Tree";
+import ControlPanelHandler from "../ControlPanelHandler";
+import { WSConnection } from "../helpers/WebsocketConnection";
 const uuidv4 = require('uuid/v4');
 
 /**
@@ -232,7 +234,24 @@ export class TreePathProperty extends ValidatedProperty<string> {
     constructor(name: string, readonly tree: Tree<any, any>) {
         super(name, '');
         this.id = uuidv4();
-        TreePathStore.registerTreePathProperty(this);
+        ControlPanelHandler.getInstance().registerHandler(`property/treepath/${this.id}/node:get`, this.isString, (n: string) => this.getTreeNodeRequest(n));
+    }
+
+    private isString(obj: any) : obj is string {
+        return (typeof obj) === 'string';
+    }
+
+    //Control panels working with this property send requests to traverse the tree
+    private getTreeNodeRequest(nodePath: string) : WSConnection.WSPendingResponse {
+        let pathArray = nodePath.split('/').filter((el: string) => el.length > 0);
+                
+        let targetNode = this.tree.getNodeAtPath(pathArray);
+
+        if (targetNode != null) {
+            return new WSConnection.SuccessResponse('Found node', targetNode);
+        } else {
+            return new WSConnection.ErrorResponse('InvalidPath');
+        }
     }
 
     protected acceptAny(value: any) : string {
@@ -252,35 +271,6 @@ export class TreePathProperty extends ValidatedProperty<string> {
     toJSON() {
         return {
             ...super.toJSON(), id: this.id
-        }
-    }
-}
-
-//TODO: This must be replaced when ControlPanelHandler is redided in a gooder way
-export class TreePathStore {
-    private static instance: TreePathStore;
-
-    static getInstance() : TreePathStore {
-        if (this.instance == null) {
-            this.instance = new TreePathStore();
-        }
-        return this.instance;
-    }
-    private constructor() {};
-
-    private static registeredProperties : {[id: string] : TreePathProperty} = {};
-
-    static registerTreePathProperty(p : TreePathProperty) {
-        this.registeredProperties[p.id] = p;
-    }
-
-    //Handles an incoming request from a client
-    static getTreeNodeFor(propertyId: string, nodePath: string[]) {
-        let targetProperty = this.registeredProperties[propertyId];
-        if (targetProperty != null) {
-            return targetProperty.tree.getNodeAtPath(nodePath);
-        } else {
-            return null;
         }
     }
 }

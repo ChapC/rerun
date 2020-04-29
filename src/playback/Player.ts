@@ -1,11 +1,18 @@
 import {ContentBlock} from './ContentBlock';
 import {MediaObject} from './MediaObject';
 import {ContentRenderer} from './renderers/ContentRenderer';
-import {ContentTypeRendererMap} from '../index';
+import {ContentTypeRendererMap, RerunStateObject} from '../index';
 import {IntervalMillisCounter} from '../helpers/IntervalMillisCounter';
 import {MultiListenable} from '../helpers/MultiListenable';
 import PrefixedLogger from '../helpers/PrefixedLogger';
+import { WSConnection } from '../helpers/WebsocketConnection';
+import ControlPanelHandler, { ControlPanelRequest, ControlPanelListener } from '../ControlPanelHandler';
+import { mediaObjectFromVideoFile } from "../contentsources/LocalDirectorySource";
+import fs from 'fs';
+import { mediaObjectFromYoutube } from "../contentsources/YoutubeChannelSource";
+import { ScheduleChange } from './ScheduleChange';
 const colors = require('colors');
+const uuidv4 = require('uuid/v4');
 
 /* Events
 *   - "newCurrentBlock": The current block changed . EventData contains the new ContentBlock.
@@ -13,17 +20,19 @@ const colors = require('colors');
 *   - "paused": An inbetween pause is active. EventData contains the pause reason.
 *   - "relTime:[start/end]-[n]": Fired at (or as close as possible to) [n] seconds after the start/before the end.
 */
+@ControlPanelListener
 export class Player extends MultiListenable {
     private log: PrefixedLogger = new PrefixedLogger("Player");
     private rendererMap: ContentTypeRendererMap;
     private defaultBlock: ContentBlock;
 
-    constructor(rendererMap: ContentTypeRendererMap, defaultBlock: ContentBlock) {
+    constructor(rendererMap: ContentTypeRendererMap, private rerunState: RerunStateObject, defaultBlock: ContentBlock) {
         super();
         this.rendererMap = rendererMap;
         this.defaultBlock = defaultBlock;
 
         this.setCurrentBlockNow(defaultBlock);
+        //ControlPanelHandler.getInstance().registerEmptyHandler('playerRefresh', () => this.refreshRequest());
     }
 
     private state : Player.PlaybackState = Player.PlaybackState.InBlock;
@@ -114,7 +123,7 @@ export class Player extends MultiListenable {
         return this.queue[index];
     }
 
-    getQueueLength() : number {
+    getQueueLength() {
         return this.queue.length;
     }
 
@@ -262,6 +271,140 @@ export class Player extends MultiListenable {
     getState() : PlayerState {
         return new PlayerState(this.currentBlock, this.progressMs, this.queue, this.state);
     }
+
+    //Control panel requests
+
+    @ControlPanelRequest('playerRefresh')
+    private refreshRequest() : WSConnection.WSPendingResponse {
+        return new WSConnection.SuccessResponse('PlayerRefresh', this.getState());
+    }
+
+    @ControlPanelRequest('nextBlock')
+    private nextBlockRequest() : WSConnection.WSPendingResponse { //Skip to the next scheduled ContentBlock
+        if (this.queue.length === 0) {
+            return new WSConnection.ErrorResponse('QueueEmpty', 'There is no scheduled content block to play.');
+        }
+
+        this.progressQueue();
+        return new WSConnection.SuccessResponse('Moved to next content block');
+    }
+
+    @ControlPanelRequest('stopToTitle')
+    private stopToTitleRequest() : WSConnection.WSPendingResponse {
+        this.goToDefaultBlock(2000); //TODO: Fixed unloadDelayMs should be replaced with the animationIn timing from default layer
+        return new WSConnection.SuccessResponse('Stopped to title block');
+    }
+
+    @ControlPanelRequest('restartPlayback')
+    private restartPlaybackRequest() : WSConnection.WSPendingResponse {
+        this.restartCurrentBlock();
+        return new WSConnection.SuccessResponse('Restarted current block');
+    }
+
+    @ControlPanelRequest('scheduleChange', ScheduleChange.isInstance)
+    private scheduleChangeRequest(requestedChange: ScheduleChange) : WSConnection.WSPendingResponse {
+        const targetContentBlock = this.getBlockInQueue(requestedChange.fromIndex);
+
+        //Verify that the request's ContentBlockID and the targetContentBlock's ID are the same 
+        if (requestedChange.contentBlockId !== targetContentBlock.id) {
+            //The control panel's schedule is wrong, probably outdated
+            return new WSConnection.ErrorResponse('IdMismatch', "The provided ContentBlock id did not match the target index's id.");
+        }
+
+        //Check that fromIndex is within the queue's range
+        if (requestedChange.fromIndex < 0 || requestedChange.fromIndex >= this.getQueueLength()) {
+            return new WSConnection.ErrorResponse('OutOfBounds',"The provided fromIndex is outside of the queue's range");
+        }
+
+        if (requestedChange.toIndex == -1) {
+            //This is a delete request
+            this.removeBlockAt(requestedChange.fromIndex);
+            return new WSConnection.SuccessResponse(`ContentBlock ${requestedChange.contentBlockId} removed`);
+        } else {
+            //This is a reorder request
+            this.reorderBlock(requestedChange.fromIndex, requestedChange.toIndex);
+            return new WSConnection.SuccessResponse(`ContentBlock ${requestedChange.contentBlockId} moved`);
+        }
+    }
+
+    @ControlPanelRequest('updateContentBlock', WSConnection.AcceptAny)
+    private updateBlockRequest(data: any) : WSConnection.WSPendingResponse {
+        return new Promise((resolve, reject) => {
+            //Try to create a new content block from the provided one
+            this.createContentBlockFromRequest(data.block).then((contentBlock: ContentBlock) => {
+                contentBlock.id = data.block.id; //Replace the generated id with the target id
+                this.rerunState.player.updateBlockAt(data.block.id, contentBlock);
+                resolve(new WSConnection.SuccessResponse(`Updated block with id ${contentBlock.id}`));
+            }).catch(error => {
+                console.error('Failed to create content block from request:', error);
+                reject(error);
+            });
+        });
+    }
+
+    @ControlPanelRequest('addContentBlock', WSConnection.AcceptAny)
+    private addContentBlockRequest(data: any) : WSConnection.WSPendingResponse {
+        return new Promise((resolve, reject) => {
+            this.createContentBlockFromRequest(data.block).then((contentBlock: ContentBlock) => {
+                this.rerunState.player.enqueueBlock(contentBlock);
+                resolve(new WSConnection.SuccessResponse(`Enqueued content block ${data.block.id}`));
+            }).catch(error => {
+                console.error('Failed to enqueue new content block:', error);
+                resolve(error);
+            });
+        });
+    }
+
+    private createContentBlockFromRequest(requestedBlock: any) : Promise<ContentBlock> {
+        return new Promise((resolve, reject) => {
+            //Try to create the MediaObject
+            this.createMediaObjectFromRequest(requestedBlock.media, this.rerunState).then((mediaObject: MediaObject) => {
+                let block = new ContentBlock(uuidv4(), mediaObject);
+                block.colour = requestedBlock.colour;
+                block.playbackConfig = requestedBlock.playbackConfig;
+                resolve(block);
+            }).catch(error => reject(error));
+        });
+    }
+    
+    private createMediaObjectFromRequest(requestedMedia: any, rerunState: RerunStateObject): Promise<MediaObject> {
+        return new Promise((resolve, reject) => {
+            let newMedia = MediaObject.CreateEmpty(requestedMedia.type);
+            newMedia.name = requestedMedia.name;
+
+            switch (requestedMedia.type) {
+                case 'Local video file':
+                    //Check that the file exists
+                    if (fs.existsSync(requestedMedia.location.path)) {
+                        if (!fs.lstatSync(requestedMedia.location.path).isDirectory()) {
+                            //Get file metadata for this media object
+                            mediaObjectFromVideoFile(requestedMedia.location.path).then((generatedMedia: MediaObject) => {
+                                generatedMedia.name = requestedMedia.name; //Set the requested name rather than the generated one
+                                resolve(generatedMedia);
+                            }).catch(error => reject(error));
+                        } else {
+                            reject('Failed to create MediaObject from request: Provided path is a directory, not a file');
+                        }
+                    } else {
+                        reject("Failed to create MediaObject from request: File not found");
+                    }
+                    break;
+                case 'Youtube video':
+                    mediaObjectFromYoutube(requestedMedia.location.path, rerunState.downloadBuffer).then((media: MediaObject) => {
+                        resolve(media);
+                    }).catch(error => reject(error));
+                    break;
+                case 'RTMP stream':
+                    reject('RTMP not yet implemented');
+                    break;
+                case 'Rerun title graphic':
+                    reject('Rerun graphic not yet implemented');
+                    break;
+                default:
+                    reject('Unknown media type "' + requestedMedia.type + '"');
+            }
+        });
+}
 }
 
 export namespace Player {

@@ -4,6 +4,8 @@ import { PlayerState } from "../playback/Player";
 import { MediaObject } from "../playback/MediaObject";
 import { Request, Response } from "express";
 import { Tree } from "../helpers/Tree";
+import { ControlPanelListener, ControlPanelRequest } from "../ControlPanelHandler";
+import { WSConnection } from "../helpers/WebsocketConnection";
 const recursive = require("recursive-readdir");
 const path = require('path');
 const jsdom = require("jsdom");
@@ -11,6 +13,7 @@ const { JSDOM } = jsdom;
 
 const initRerunReference = require('./graphicLayerInjection').script;
 
+@ControlPanelListener
 export class GraphicManager {
     private graphicsFolder : PathLike; //The root folder to scan for graphics packages
     //All graphics packages and layers. The first layer of the tree is packages, the second is layers.
@@ -177,7 +180,12 @@ export class GraphicManager {
     getAvailablePackages() : GraphicPackage[] {
         return this.graphicsTree.rootNode.getChildren().map((packageNode) => packageNode.value as GraphicPackage);
     }
-}
+
+    @ControlPanelRequest('getGraphicsPackages')
+    private getGraphicsPackagesRequest() {
+        return new WSConnection.SuccessResponse('Available packages', this.getAvailablePackages());
+    }
+ }
 
 function removeRoute(routePath: string, expressApp: any) {
     //Loop through expressApp's middlewares and remove any with routePath

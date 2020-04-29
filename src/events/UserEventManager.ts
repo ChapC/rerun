@@ -5,12 +5,15 @@ import SubTypeStore from '../helpers/SubTypeStore';
 import { RerunStateObject } from '..';
 import { SingleListenable } from '../helpers/SingleListenable';
 import { isArray } from 'util';
+import ControlPanelHandler, { ControlPanelListener, ControlPanelRequest } from '../ControlPanelHandler';
+import { WSConnection } from '../helpers/WebsocketConnection';
 
 const uuidv4 : () => string = require('uuid/v4');
 
 /**
  * Manages active UserEvents.
  */
+@ControlPanelListener
 export class UserEventManager extends SingleListenable<ToggleableUserEvent[]> implements IJSONSavable {
     private events : {[id: string] : ToggleableUserEvent} = {};
 
@@ -118,7 +121,100 @@ export class UserEventManager extends SingleListenable<ToggleableUserEvent[]> im
     toJSON() : any {
         return { events: this.events };
     }
-}
+
+    //Control panel requests
+    @ControlPanelRequest('getEvents')
+    private getEventsRequest() : WSConnection.WSPendingResponse {
+        return new WSConnection.SuccessResponse('events', this.getEvents());
+    }
+
+    //TODO: These outline getters will need to change so that plug-ins can define their own actions/events
+    @ControlPanelRequest('getEventOutline')
+    private getEventOutlineRequest() : WSConnection.WSPendingResponse {
+        return new WSConnection.SuccessResponse('default outline', this.getNewEvent().getOutline());
+    }
+
+    @ControlPanelRequest('getEventLogicOutline', WSConnection.AcceptAny)
+    private getEventLogicOutlineRequest(data: any) : WSConnection.WSPendingResponse {
+        if (data && data.eventType) {
+            let logic = this.rerunState.userEventManager.eventLogicTypes.getInstanceOf(data.eventType);
+            if (logic != null) {
+                return new WSConnection.SuccessResponse('logicoutline', logic.getOutline());
+            } else {
+                return new WSConnection.ErrorResponse('UnknownLogicType', `Unknown event logic type '${data.eventType}`);
+            }
+        } else {
+            return new WSConnection.ErrorResponse('InvalidArguments', 'No logic event type provided');
+        }
+    }
+
+    @ControlPanelRequest('getEventActionOutline', WSConnection.AcceptAny)
+    private getEventActionOutlineRequest(data: any) : WSConnection.WSPendingResponse {
+        if (data && data.actionType) {
+            let action = this.rerunState.userEventManager.eventActionTypes.getInstanceOf(data.actionType);
+            if (action != null) {
+                return new WSConnection.SuccessResponse('actionoutline', action.getOutline());
+            } else {
+                return new WSConnection.ErrorResponse('UnknownActionType', `Unknown event action type '${data.actionType}`);
+            }
+        } else {
+            return new WSConnection.ErrorResponse('InvalidArguments', 'No action event type provided');
+        }
+    }
+
+    @ControlPanelRequest('createEvent', WSConnection.AcceptAny)
+    private createEventRequest(data: any) : WSConnection.WSPendingResponse {
+        let newEvent = this.rerunState.userEventManager.getNewEvent();
+
+        if (newEvent.deserialize(data)) {
+            let eventId = this.rerunState.userEventManager.addEvent(newEvent);
+            if (eventId) {
+                return new WSConnection.SuccessResponse('Created new event with ID ' + eventId);
+            } else {
+                return new WSConnection.ErrorResponse('CreateFailed', 'Error while creating event');
+            }
+        } else {
+            return new WSConnection.ErrorResponse('InvalidEvent', 'Failed to parse event');
+        }
+    }
+
+    @ControlPanelRequest('updateEvent', WSConnection.AcceptAny)
+    private updateEventRequest(data: any) : WSConnection.WSPendingResponse {
+        if (data.eventId == null || data.newEvent == null) {
+            return new WSConnection.ErrorResponse('InvalidArguments', 'Event ID and new event data not provided');
+        }
+
+        let updatedEvent = this.rerunState.userEventManager.getNewEvent();
+
+        if (updatedEvent.deserialize(data.newEvent)) {
+            this.rerunState.userEventManager.updateEvent(data.eventId, updatedEvent);
+            return new WSConnection.SuccessResponse('Updated event with ID ' + data.eventId);
+        } else {
+            return new WSConnection.ErrorResponse('InvalidEvent', 'Failed to parse event');
+        }
+    }
+
+    @ControlPanelRequest('deleteEvent', WSConnection.AcceptAny)
+    private deleteEventRequest(data: any) : WSConnection.WSPendingResponse {
+        if (data.eventId == null) {
+            return new WSConnection.ErrorResponse('InvalidArguments', 'No event id provided');
+        }
+
+        this.rerunState.userEventManager.removeEvent(data.eventId);
+
+        return new WSConnection.SuccessResponse('Removed event with ID ' + data.eventId);
+    }
+
+    @ControlPanelRequest('setEventEnabled', WSConnection.AcceptAny)
+    private setEventEnabledRequest(data: any) : WSConnection.WSPendingResponse {
+        if (data.eventId == null || data.enabled == null) {
+            return new WSConnection.ErrorResponse('InvalidArguments', 'No event id provided');
+        }
+
+        this.rerunState.userEventManager.setEventEnabled(data.eventId, data.enabled);
+        return new WSConnection.SuccessResponse(`${data.enabled ? 'Enabled' : 'Disabled'} event ID ${data.eventId}`);
+    }
+ }
 
 class ToggleableUserEvent {
     enabled: boolean = true;

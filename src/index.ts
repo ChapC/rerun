@@ -25,6 +25,7 @@ import StartupSteps from "./StartupSteps";
 import { JSONSavable } from "./persistance/JSONSavable";
 import { PlayerEventLogic } from "./events/PlayerEventLogic";
 import { ShowGraphicAction } from "./events/UserEventActionTypes";
+import { WSConnection } from "./helpers/WebsocketConnection";
 
 const express = require('express');
 const app = express();
@@ -37,8 +38,6 @@ const { JSDOM } = jsdom;
 
 const supportedVideoExtensions = ['.mp4', '.mkv', '.flv', '.avi', '.m4v', '.mov'];
 const saveFolder = path.join(__dirname, 'userdata');
-
-console.info(colors.magenta.bold('-- Rerun v0.1 --'));
 
 //State type definition
 type OBSSourceMap = {
@@ -62,14 +61,14 @@ export class RerunStateObject {
     userSettings: RerunUserSettings;
     graphicsManager: GraphicManager;
     downloadBuffer: WebVideoDownloader;
-    controlPanelHandler : ControlPanelHandler;
     contentSourceManager: ContentSourceManager;
     player: Player;
     userEventManager: UserEventManager;
 };
 const rerunState = new RerunStateObject();
-rerunState.controlPanelHandler = new ControlPanelHandler(rerunState);
+ControlPanelHandler.setRerunState(rerunState);
 
+console.info(colors.magenta.bold('-- Rerun v0.1 --'));
 
 //Find my local IP
 for (var device in os.networkInterfaces()) {
@@ -90,7 +89,8 @@ if (rerunState.localIP == null) {
 
 //Alerts listener
 rerunState.alerts = new AlertContainer();
-rerunState.alerts.addChangeListener((alerts) => rerunState.controlPanelHandler.sendAlert('setAlerts', alerts));
+rerunState.alerts.addChangeListener((alerts) => ControlPanelHandler.getInstance().sendAlert('setAlerts', alerts));
+ControlPanelHandler.getInstance().registerEmptyHandler('getAlerts', () => new WSConnection.SuccessResponse('alerts', rerunState.alerts.getAlerts()));
 
 //Startup chain
 rerunState.startup = new StartupSteps(rerunState);
@@ -120,7 +120,7 @@ rerunState.startup.appendStep("Web server", (rerunState, l) => {
     l.info('Launching control panel app...');
     app.ws('/controlWS', function(ws:WebSocket, req:ClientRequest) {
         new WebsocketHeartbeat(ws);
-        rerunState.controlPanelHandler.registerWebsocket(ws);
+        ControlPanelHandler.getInstance().acceptWebsocket(ws);
     });
 
     return new Promise((resolve) => {
@@ -253,21 +253,21 @@ rerunState.startup.appendStep("Player", (rerunState, l) => {
     const titleScreenGraphicLocation = new GraphicsLayerLocation('Title slate');
     const titleBlock = new ContentBlock('titleBlock', new MediaObject(MediaObject.MediaType.RerunGraphic, titleScreenGraphicName, titleScreenGraphicLocation, Number.POSITIVE_INFINITY));
 
-    rerunState.player = new Player(rerunState.renderers, titleBlock);
+    rerunState.player = new Player(rerunState.renderers, rerunState, titleBlock);
 
     rerunState.player.on('newCurrentBlock', (newCurrentBlock) => {
-        rerunState.controlPanelHandler.sendAlert('setPlayerState', rerunState.player.getState());
+        ControlPanelHandler.getInstance().sendAlert('setPlayerState', rerunState.player.getState());
     });
 
     rerunState.player.on('queueChange', (newQueue) => {
-        rerunState.controlPanelHandler.sendAlert('setPlayerState', rerunState.player.getState());
+        ControlPanelHandler.getInstance().sendAlert('setPlayerState', rerunState.player.getState());
     });
 
     rerunState.player.on('playbackStateChange', (newPlaybackState) => {
-        rerunState.controlPanelHandler.sendAlert('setPlayerState', rerunState.player.getState());
+        ControlPanelHandler.getInstance().sendAlert('setPlayerState', rerunState.player.getState());
     });
 
-    rerunState.player.on('paused', (pauseReason) => rerunState.controlPanelHandler.sendAlert('setPlayerState', rerunState.player.getState()));
+    rerunState.player.on('paused', (pauseReason) => ControlPanelHandler.getInstance().sendAlert('setPlayerState', rerunState.player.getState()));
 
     return Promise.resolve();
 }, function cleanup() {
@@ -328,7 +328,7 @@ rerunState.startup.appendStep("User events", (rerunState, l) => {
             //TODO: Plugins should be able to define their own event logic and action types
 
             //Listeners
-            rerunState.userEventManager.addChangeListener((events) => rerunState.controlPanelHandler.sendAlert('setEventList', events));
+            rerunState.userEventManager.addChangeListener((events) => ControlPanelHandler.getInstance().sendAlert('setEventList', events));
             rerunState.userEventManager.addChangeListener((events) => JSONSavable.serializeJSON(rerunState.userEventManager.toJSON(), rerunState.userEventManager.savePath))
             
             //Try load from saved events
@@ -350,7 +350,7 @@ rerunState.startup.appendStep("Content sources", (rerunState, l) => {
             rerunState.contentSourceManager = new ContentSourceManager(path.join(saveFolder, 'contentsources.json'), rerunState.player);
             JSONSavable.updateSavable(rerunState.contentSourceManager).then(() => {
                 rerunState.contentSourceManager.addChangeListener((sources) => {
-                    rerunState.controlPanelHandler.sendAlert('setContentSources', sources);
+                    ControlPanelHandler.getInstance().sendAlert('setContentSources', sources);
                 });
         
                 rerunState.contentSourceManager.updateAutoPoolNow();
