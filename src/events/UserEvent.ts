@@ -6,7 +6,7 @@ import SubTypeStore from '../helpers/SubTypeStore';
 export class UserEvent extends SavablePropertyGroup {
     readonly name = new StringProperty("Name", "New event");
 
-    readonly logicType = new StringSelectProperty("Event type");
+    readonly logicType = new StringSelectProperty("Event");
     readonly logic = new SubGroupProperty<UserEvent.Logic>("Logic", this.logicType, this.logicTypes);
  
     readonly actionType = new StringSelectProperty("Action");

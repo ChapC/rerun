@@ -26,6 +26,7 @@ import { JSONSavable } from "./persistance/JSONSavable";
 import { PlayerEventLogic } from "./events/PlayerEventLogic";
 import { ShowGraphicAction } from "./events/UserEventActionTypes";
 import { WSConnection } from "./helpers/WebsocketConnection";
+import { InBlockLogic } from "./events/logic/InBlockLogic";
 
 const express = require('express');
 const app = express();
@@ -321,7 +322,7 @@ rerunState.startup.appendStep("User events", (rerunState, l) => {
             rerunState.userEventManager = new UserEventManager(path.join(saveFolder, 'events.json'), rerunState);
         
             //Built-in event logic types
-            rerunState.userEventManager.eventLogicTypes.registerSubtype("Player", (r) => new PlayerEventLogic(r.player));
+            rerunState.userEventManager.eventLogicTypes.registerSubtype("During a block", (r) => new InBlockLogic(r.player));
             //Built-in event action types
             rerunState.userEventManager.eventActionTypes.registerSubtype("Show a graphic", (r) => new ShowGraphicAction(r.graphicsManager));
 

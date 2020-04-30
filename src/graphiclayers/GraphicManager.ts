@@ -33,8 +33,6 @@ export class GraphicManager {
 
     //Sends a graphic event to websockets from the target layer (and optionally the target websocket)
     sendGraphicEvent = (event:string, toLayer:string, toSocket?:WebSocket) => {
-        //TODO: Allow the user to load as many 'active' packages as they want    
-
         //Graphic events contain the event name and the player's current state
         let eventObj = {name: event, playerState: this.fetchPlayerState()}
     
