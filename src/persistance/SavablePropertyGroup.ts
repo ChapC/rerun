@@ -65,20 +65,13 @@ export default abstract class SavablePropertyGroup implements IJSONSavable {
         return outline;
     }
 
-    //Recursively scans this object for FormProperty objects
+    //Scans this object for FormProperty objects
     private scanForProperties(): KeyFormProperty[] {
         const formProps: KeyFormProperty[] = [];
         for (const key of Object.keys(this)) {
             if (this[key] instanceof ValidatedProperty) {
                 const property = this[key] as ValidatedProperty<any>;
                 formProps.push(new KeyFormProperty(key, property));
-            } else if (this[key] instanceof SavablePropertyGroup) {
-                //Grab all the properties from the nested form
-                const subForm = this[key] as SavablePropertyGroup;
-                subForm.scanForProperties().forEach(nestedKeyPropPair => {
-                    //Nested form keys have the key of their form prefixed to them (eg. "myNestedForm.propertyKey")
-                    formProps.push(new KeyFormProperty(key + nestedKeyPropPair.key, nestedKeyPropPair.prop));
-                });
             }
         }
         return formProps;
