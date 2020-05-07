@@ -19,6 +19,7 @@ export class UserEvent extends SavablePropertyGroup {
 
         //Configure logic to execute action when triggered - note that the logic and action for an event can be added in any order
         this.logic.addChangeListener((newLogic) => {
+            this.logic.getValue().parentEvent = this;
             if (this.action.hasValue()) {
                 newLogic.setTriggerCallback(() => this.action.getValue().execute());
             }
@@ -34,6 +35,7 @@ export class UserEvent extends SavablePropertyGroup {
 export namespace UserEvent {
     //The actual logic of the UserEvent
     export abstract class Logic extends SavablePropertyGroup {
+        parentEvent : UserEvent;
         //Called when the user switches the event on or off
         abstract enable() : void;
         abstract disable() : void;

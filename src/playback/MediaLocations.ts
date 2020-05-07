@@ -1,5 +1,6 @@
 import { MediaObject } from './MediaObject';
 import { WebVideoDownloader } from '../WebVideoDownloader';
+import { GraphicLayerReference } from '../graphiclayers/GraphicManager';
 
 export class LocalFileLocation extends MediaObject.Location {
     getType() {return MediaObject.ContentType.LocalFile};
@@ -20,12 +21,16 @@ export class LocalFileLocation extends MediaObject.Location {
 export class GraphicsLayerLocation extends MediaObject.Location {
     getType() {return MediaObject.ContentType.GraphicsLayer};
 
-    constructor(private layerName: string) {
+    constructor(private layer: GraphicLayerReference) {
         super();
     }
 
+    getLayerRef() {
+        return this.layer;
+    }
+
     getPath(): string {
-        return this.layerName;
+        return this.layer.toString();
     }
 
     getStatus(): MediaObject.Status {

@@ -10,7 +10,7 @@ import { ContentBlock } from "./playback/ContentBlock";
 import { WebsocketHeartbeat } from './helpers/WebsocketHeartbeat';
 import { OBSConnection } from './OBSConnection';
 import { UserEventManager } from "./events/UserEventManager";
-import { GraphicManager } from "./graphiclayers/GraphicManager";
+import { GraphicManager, GraphicLayerReference } from "./graphiclayers/GraphicManager";
 import { LocalDirectorySource } from './contentsources/LocalDirectorySource';
 import { ContentSourceManager } from "./contentsources/ContentSourceManager";
 import { VideoJSRenderer } from "./playback/renderers/videojs/VideoJSRenderer";
@@ -23,10 +23,10 @@ import RerunUserSettings from "./RerunUserSettings";
 import { AlertContainer } from "./helpers/AlertContainer";
 import StartupSteps from "./StartupSteps";
 import { JSONSavable } from "./persistance/JSONSavable";
-import { PlayerEventLogic } from "./events/PlayerEventLogic";
-import { ShowGraphicAction } from "./events/UserEventActionTypes";
+import { ShowGraphicAction } from "./events/actions/ShowGraphicAction";
 import { WSConnection } from "./helpers/WebsocketConnection";
 import { InBlockLogic } from "./events/logic/InBlockLogic";
+import { BetweenBlockLogic } from "./events/logic/BetweenBlockLogic";
 
 const express = require('express');
 const app = express();
@@ -251,7 +251,7 @@ rerunState.startup.appendStep("Player", (rerunState, l) => {
 
     //Use the title screen graphic as the default block (when nothing else is available)
     const titleScreenGraphicName = 'Title slate';
-    const titleScreenGraphicLocation = new GraphicsLayerLocation('Title slate');
+    const titleScreenGraphicLocation = new GraphicsLayerLocation(new GraphicLayerReference('Clean', 'Title slate'));
     const titleBlock = new ContentBlock('titleBlock', new MediaObject(MediaObject.MediaType.RerunGraphic, titleScreenGraphicName, titleScreenGraphicLocation, Number.POSITIVE_INFINITY));
 
     rerunState.player = new Player(rerunState.renderers, rerunState, titleBlock);
@@ -300,12 +300,17 @@ rerunState.startup.appendStep("Graphics layer socket", (rerunState, l) => {
             app.ws('/graphicEvents', function(ws:WebSocket, req:any) {
                 console.info('Graphic client [' + req.query.layer + '@' + req.connection.remoteAddress +'] connected');
                 new WebsocketHeartbeat(ws);
+
+                let layerPath = req.query.layer.split('/');
+                let layerRef = new GraphicLayerReference(layerPath[0], layerPath[1]);
+
                 ws.on('close', () => {
                     console.info('Graphic client [' + req.query.layer + '@' + req.connection.remoteAddress +'] disconnected');
-                    rerunState.graphicsManager.removeWebsocket(ws, req.query.layer);
+                    let layerPath = req.query.layer.split('/');
+                    rerunState.graphicsManager.removeWebsocket(ws, layerRef);
                 });
         
-                rerunState.graphicsManager.addWebsocket(ws, req.query.layer);
+                rerunState.graphicsManager.addWebsocket(ws, layerRef);
             });
             resolve();
         } catch (error) {
@@ -323,6 +328,7 @@ rerunState.startup.appendStep("User events", (rerunState, l) => {
         
             //Built-in event logic types
             rerunState.userEventManager.eventLogicTypes.registerSubtype("During a block", (r) => new InBlockLogic(r.player));
+            rerunState.userEventManager.eventLogicTypes.registerSubtype("In-between blocks", (r) => new BetweenBlockLogic(r.player));
             //Built-in event action types
             rerunState.userEventManager.eventActionTypes.registerSubtype("Show a graphic", (r) => new ShowGraphicAction(r.graphicsManager));
 

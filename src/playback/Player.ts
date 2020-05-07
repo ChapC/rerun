@@ -15,9 +15,9 @@ const colors = require('colors');
 const uuidv4 = require('uuid/v4');
 
 /* Events
-*   - "newCurrentBlock": The current block changed . EventData contains the new ContentBlock.
+*   - "newCurrentBlock": The current block changed. EventData contains the new ContentBlock.
+*   - "stopped": Playback stopped to default block.
 *   - "queueChange": The queue was updated. EventData contains the new queue.
-*   - "paused": An inbetween pause is active. EventData contains the pause reason.
 *   - "relTime:[start/end]-[n]": Fired at (or as close as possible to) [n] seconds after the start/before the end.
 */
 @ControlPanelListener
@@ -69,6 +69,19 @@ export class Player extends MultiListenable {
         this.fireEvent('queueChange', this.queue);
     }
 
+    dequeueBlock(block:ContentBlock) {
+        let targetIndex = null;
+        for (let i = 0; i < this.queue.length; i++) {
+            if (this.queue[i].id === block.id) {
+                targetIndex = i;
+            }
+        }
+
+        if (targetIndex != null) {
+            this.removeBlockAt(targetIndex);
+        }
+    }
+
     insertBlockAt(index:number, newBlock:ContentBlock, supressEvent:boolean = false) {
         this.queue.splice(index, 0, newBlock);
         if (index === 0) {
@@ -87,7 +100,7 @@ export class Player extends MultiListenable {
         }
     }
 
-    updateBlockAt(blockId:string, newBlock:ContentBlock) {
+    updateBlock(blockId:string, newBlock:ContentBlock) {
         let index = null;
         for (let i = 0; i < this.queue.length; i++) {
             let block = this.queue[i];
@@ -188,6 +201,7 @@ export class Player extends MultiListenable {
     goToDefaultBlock(unloadDelayMs:number = 0) {
         this.log.info('Jumping to default block');
         this.setCurrentBlockNow(this.defaultBlock, unloadDelayMs);
+        this.fireEvent('stopped', this.defaultBlock);
     }
 
     restartCurrentBlock() {
@@ -268,6 +282,10 @@ export class Player extends MultiListenable {
         }
     }
 
+    getDefaultBlock() {
+        return this.defaultBlock;
+    }
+
     getState() : PlayerState {
         return new PlayerState(this.currentBlock, this.progressMs, this.queue, this.state);
     }
@@ -333,7 +351,7 @@ export class Player extends MultiListenable {
             //Try to create a new content block from the provided one
             this.createContentBlockFromRequest(data.block).then((contentBlock: ContentBlock) => {
                 contentBlock.id = data.block.id; //Replace the generated id with the target id
-                this.rerunState.player.updateBlockAt(data.block.id, contentBlock);
+                this.rerunState.player.updateBlock(data.block.id, contentBlock);
                 resolve(new WSConnection.SuccessResponse(`Updated block with id ${contentBlock.id}`));
             }).catch(error => {
                 console.error('Failed to create content block from request:', error);

@@ -1,6 +1,5 @@
 import { UserEvent } from './UserEvent';
 import { IJSONSavable } from '../persistance/JSONSavable';
-import { PlayerEventLogic } from './PlayerEventLogic';
 import SubTypeStore from '../helpers/SubTypeStore';
 import { RerunStateObject } from '..';
 import { SingleListenable } from '../helpers/SingleListenable';

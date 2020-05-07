@@ -1,9 +1,10 @@
-import { UserEvent } from './UserEvent';
-import { TreePathProperty } from '../persistance/ValidatedProperty';
-import { GraphicManager, GraphicLayer } from '../graphiclayers/GraphicManager';
+import { UserEvent } from '../UserEvent';
+import { TreePathProperty, NumberProperty } from '../../persistance/ValidatedProperty';
+import { GraphicManager, GraphicLayer } from '../../graphiclayers/GraphicManager';
 
 export class ShowGraphicAction extends UserEvent.Action {
     readonly targetLayerName = new TreePathProperty("Target layer", this.graphicsManager.graphicsTree);
+    readonly onScreenDurationSecs = new NumberProperty('Duration', 1);
     private targetLayer : GraphicLayer = null;
     constructor(private graphicsManager: GraphicManager) {
         super("Show a graphic");
@@ -17,7 +18,7 @@ export class ShowGraphicAction extends UserEvent.Action {
 
     execute() {
         if (this.targetLayer != null) {
-            this.graphicsManager.sendGraphicEvent('in', this.targetLayer.name);
+            this.graphicsManager.sendGraphicEvent('in', this.targetLayer.asReference);
         } else {
             console.warn('[ShowGraphicAction] - The target layer is not assigned');
         }
@@ -25,7 +26,7 @@ export class ShowGraphicAction extends UserEvent.Action {
 
     executeOut() {
         if (this.targetLayer != null) {
-            this.graphicsManager.sendGraphicEvent('out', this.targetLayer.name);
+            this.graphicsManager.sendGraphicEvent('out', this.targetLayer.asReference);
         }
     }
 }

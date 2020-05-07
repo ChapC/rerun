@@ -1,12 +1,14 @@
 import { ContentRenderer } from './ContentRenderer';
 import { MediaObject } from './../MediaObject';
+import { GraphicLayerReference } from '../../graphiclayers/GraphicManager';
+import { GraphicsLayerLocation } from '../MediaLocations';
 
 //Sends graphic events when media starts or stops. Used for title screens.
 export class RerunGraphicRenderer implements ContentRenderer {
     supportsBackgroundLoad = false;
     
-    private sendGraphicEvent: (event: string, forLayer: string) => void;
-    constructor(sendGraphicEvent: (event: string, forLayer: string) => void) {
+    private sendGraphicEvent: (event: string, forLayer: GraphicLayerReference) => void;
+    constructor(sendGraphicEvent: (event: string, forLayer: GraphicLayerReference) => void) {
         this.sendGraphicEvent = sendGraphicEvent;
     }
 
@@ -17,13 +19,17 @@ export class RerunGraphicRenderer implements ContentRenderer {
     currentGraphic : MediaObject;
 
     loadMedia(media:MediaObject) : Promise<void> {
+        if (this.currentGraphic != null) {
+            //Unload the current graphic now
+            this.stop();
+        }
         this.currentGraphic = media;
         return Promise.resolve();
     }
 
     stop() : Promise<void> {
         if (this.currentGraphic != null) { //Already stopped
-            this.sendGraphicEvent('out', this.currentGraphic.location.getPath());
+            this.sendGraphicEvent('out', (<GraphicsLayerLocation>this.currentGraphic.location).getLayerRef());
             this.currentGraphic = null;
         }
         return Promise.resolve();
@@ -34,7 +40,7 @@ export class RerunGraphicRenderer implements ContentRenderer {
     }
 
     play() : Promise<void> {
-        this.sendGraphicEvent('in', this.currentGraphic.location.getPath());
+        this.sendGraphicEvent('in', (<GraphicsLayerLocation>this.currentGraphic.location).getLayerRef());
         return Promise.resolve();
     }
 
