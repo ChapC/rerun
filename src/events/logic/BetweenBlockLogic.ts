@@ -88,6 +88,14 @@ export class BetweenBlockLogic extends UserEvent.Logic {
             });
 
             this.listenerCancellers.push(() => this.player.off(playerBlockListener), () => this.player.off(playerStopListener));
+
+            //Those are our listeners, but if we're already in the middle of a block we might need to queue the block now
+            let currentState = this.player.getState();
+            if (currentState.playbackState === Player.PlaybackState.InBlock) {
+                if (this.frequency.getValue() === 1 && this.player.getDefaultBlock().id !== currentState.currentBlock.id) {
+                    this.setupQueuedBlock();
+                }
+            }
         } else {
             //This event's action isn't related to on-screen content. We can trigger it normally when a ContentBlock finishes.
             let blockFinishedCallback = this.player.on('relTime:end-0', () => {
@@ -109,6 +117,11 @@ export class BetweenBlockLogic extends UserEvent.Logic {
         let durationMs = gAction.onScreenDurationSecs.getValue() * 1000;
 
         let graphicMediaObj = new MediaObject(MediaObject.MediaType.RerunGraphic, this.parentEvent.name.getValue() + ' - BetweenBlockGraphic', new GraphicsLayerLocation(layer), durationMs);
+
+        if (gAction.getTargetLayer().animationTimings['in']) {
+            graphicMediaObj.preRollMs = gAction.getTargetLayer().animationTimings['in'];
+        }
+
         if (this.queuedBlock == null) {
             //Create a new block
             let graphicBlock = new ContentBlock(uuidv4(), graphicMediaObj);
@@ -127,7 +140,7 @@ export class BetweenBlockLogic extends UserEvent.Logic {
         this.listenerCancellers.map((cancelFunction) => cancelFunction());
         this.listenerCancellers = [];
 
-        if (this.queuedMediaObject == null) {
+        if (this.queuedBlock != null) {
             //Dequeue the scheduled MediaObject
             this.player.dequeueBlock(this.queuedBlock);
             this.queuedBlock = null;

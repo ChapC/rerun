@@ -16,6 +16,10 @@ export class ShowGraphicAction extends UserEvent.Action {
         });
     }
 
+    getTargetLayer() {
+        return this.targetLayer;
+    }
+
     execute() {
         if (this.targetLayer != null) {
             this.graphicsManager.sendGraphicEvent('in', this.targetLayer.asReference);

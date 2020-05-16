@@ -17,13 +17,16 @@ export class RerunGraphicRenderer implements ContentRenderer {
     * On unload, the renderer sends the 'out' event to the target layer.
     */
     currentGraphic : MediaObject;
+    private graphicIn = false;
 
     loadMedia(media:MediaObject) : Promise<void> {
-        if (this.currentGraphic != null) {
-            //Unload the current graphic now
-            this.stop();
+        if (!(this.currentGraphic != null && this.currentGraphic.isSame(media))) {
+            if (this.currentGraphic != null) {
+                //Unload the current graphic now
+                this.stop();
+            }
+            this.currentGraphic = media;
         }
-        this.currentGraphic = media;
         return Promise.resolve();
     }
 
@@ -31,6 +34,7 @@ export class RerunGraphicRenderer implements ContentRenderer {
         if (this.currentGraphic != null) { //Already stopped
             this.sendGraphicEvent('out', (<GraphicsLayerLocation>this.currentGraphic.location).getLayerRef());
             this.currentGraphic = null;
+            this.graphicIn = false;
         }
         return Promise.resolve();
     }
@@ -40,7 +44,11 @@ export class RerunGraphicRenderer implements ContentRenderer {
     }
 
     play() : Promise<void> {
-        this.sendGraphicEvent('in', (<GraphicsLayerLocation>this.currentGraphic.location).getLayerRef());
+        if (!this.graphicIn) {
+            console.info('Graphic play');
+            this.sendGraphicEvent('in', (<GraphicsLayerLocation>this.currentGraphic.location).getLayerRef());
+            this.graphicIn = true;
+        }
         return Promise.resolve();
     }
 

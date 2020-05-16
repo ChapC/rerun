@@ -16,7 +16,16 @@ export class MediaObject {
         return new MediaObject(type, 'Unnamed', null, null);
     }
 
+    isSame(other: MediaObject) : boolean {
+        return (
+            this.name === other.name && this.type === other.type && this.durationMs === other.durationMs 
+            && this.preRollMs === other.preRollMs && this.location.getPath() === other.location.getPath() 
+            && this.location.getType() === other.location.getType()
+        );
+    }
+
     thumbnail:string = null;
+    preRollMs: number;
 }
 
 export namespace MediaObject {

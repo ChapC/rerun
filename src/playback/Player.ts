@@ -19,6 +19,12 @@ const uuidv4 = require('uuid/v4');
 *   - "stopped": Playback stopped to default block.
 *   - "queueChange": The queue was updated. EventData contains the new queue.
 *   - "relTime:[start/end]-[n]": Fired at (or as close as possible to) [n] seconds after the start/before the end.
+*
+* TODO: (long term) With the current Player setup, it's really tricky to overlay content on top of other content. 
+*       It works okay for graphics-over-video, as these are handled by two different ContentRenderers, but it's not
+*       currently possible to, for instance, use a semi-transparent video as a stinger on top of other videos. To facilitate this
+*       we might have to look into the concept of video/audio tracks, where multiple instances of ContentRenderers
+*       could run on separate tracks simultaneously. That's a whole thing though, probably involving a move from OBS to ffmpeg directly.
 */
 @ControlPanelListener
 export class Player extends MultiListenable {
@@ -32,7 +38,6 @@ export class Player extends MultiListenable {
         this.defaultBlock = defaultBlock;
 
         this.setCurrentBlockNow(defaultBlock);
-        //ControlPanelHandler.getInstance().registerEmptyHandler('playerRefresh', () => this.refreshRequest());
     }
 
     private state : Player.PlaybackState = Player.PlaybackState.InBlock;
@@ -82,25 +87,25 @@ export class Player extends MultiListenable {
         }
     }
 
-    insertBlockAt(index:number, newBlock:ContentBlock, supressEvent:boolean = false) {
+    insertBlockAt(index:number, newBlock:ContentBlock, suppressEvent:boolean = false) {
         this.queue.splice(index, 0, newBlock);
         if (index === 0) {
             //Preload this block
             this.attemptNextBlockPreload();
         }
-        if (!supressEvent) {
+        if (!suppressEvent) {
             this.fireEvent('queueChange', this.queue);
         }
     }
 
-    removeBlockAt(index:number, supressEvent:boolean = false) {
+    removeBlockAt(index:number, suppressEvent:boolean = false) {
         this.queue.splice(index, 1);
-        if (!supressEvent) {
+        if (!suppressEvent) {
             this.fireEvent('queueChange', this.queue);
         }
     }
 
-    updateBlock(blockId:string, newBlock:ContentBlock) {
+    updateBlock(blockId:string, newBlock:ContentBlock) : boolean {
         let index = null;
         for (let i = 0; i < this.queue.length; i++) {
             let block = this.queue[i];
@@ -112,7 +117,7 @@ export class Player extends MultiListenable {
 
         if (index == null) {
             this.log.warn("Content block update failed: No block with id = " + blockId);
-            return;
+            return false;
         }
 
         this.queue[index] = newBlock;
@@ -123,6 +128,7 @@ export class Player extends MultiListenable {
             this.attemptNextBlockPreload();
         }
         this.fireEvent('queueChange', this.queue);
+        return true;
     }
 
     reorderBlock(oldIndex:number, newIndex:number) {
@@ -263,14 +269,30 @@ export class Player extends MultiListenable {
         
         this.log.info('Preloading the next block (' + nextBlock.media.name + ')');
 
+        let loadMedia = () => targetRenderer.loadMedia(nextBlock.media).then(() => {
+            //Check if this block has a preload attribute
+            if (nextBlock.media.preRollMs && nextBlock.media.preRollMs > 0) {
+                //This block should be started preRollMs before the end of the current block
+                this.one(`relTime:end-${Math.floor(nextBlock.media.preRollMs / 1000)}`, () => {
+                    if (this.queue[0].id === nextBlock.id) { //Check that this block hasn't been deleted from the queue
+                        console.info(`Prerolling content block ${nextBlock.media.name} with ${nextBlock.media.preRollMs}ms`);
+                        if (!targetRenderer.getLoadedMedia().isSame(nextBlock.media)) {
+                            targetRenderer.loadMedia(nextBlock.media).then(targetRenderer.play);
+                        }
+                        targetRenderer.play();
+                    }
+                });
+            }
+        }).catch(error => error('Failed to load next block into renderer: ', error));
+
         if (targetRenderer.getLoadedMedia() != null) {
             //If the renderer already has media loaded, unload it first
             targetRenderer.stop().then(() => {
-                targetRenderer.loadMedia(nextBlock.media).catch(error => error('Failed to load next block into renderer: ', error));
-            }).catch(error => error('Failed to load next block into renderer: Error while unloading current block - ', error));
+                loadMedia();
+            }).catch(error => error('Failed to load next block into renderer: Error while stopping current block - ', error));
         } else {
             //Nothing loaded, load the new media immediately
-            targetRenderer.loadMedia(nextBlock.media).catch(error => error('Failed to load next block into renderer: ', error));
+            loadMedia();
         }
 
     }
