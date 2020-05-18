@@ -127,38 +127,9 @@ export class UserEventManager extends SingleListenable<ToggleableUserEvent[]> im
         return new WSConnection.SuccessResponse('events', this.getEvents());
     }
 
-    //TODO: These outline getters will need to change so that plug-ins can define their own actions/events
     @ControlPanelRequest('getEventOutline')
     private getEventOutlineRequest() : WSConnection.WSPendingResponse {
         return new WSConnection.SuccessResponse('default outline', this.getNewEvent().getOutline());
-    }
-
-    @ControlPanelRequest('getEventLogicOutline', WSConnection.AcceptAny)
-    private getEventLogicOutlineRequest(data: any) : WSConnection.WSPendingResponse {
-        if (data && data.eventType) {
-            let logic = this.rerunState.userEventManager.eventLogicTypes.getInstanceOf(data.eventType);
-            if (logic != null) {
-                return new WSConnection.SuccessResponse('logicoutline', logic.getOutline());
-            } else {
-                return new WSConnection.ErrorResponse('UnknownLogicType', `Unknown event logic type '${data.eventType}`);
-            }
-        } else {
-            return new WSConnection.ErrorResponse('InvalidArguments', 'No logic event type provided');
-        }
-    }
-
-    @ControlPanelRequest('getEventActionOutline', WSConnection.AcceptAny)
-    private getEventActionOutlineRequest(data: any) : WSConnection.WSPendingResponse {
-        if (data && data.actionType) {
-            let action = this.rerunState.userEventManager.eventActionTypes.getInstanceOf(data.actionType);
-            if (action != null) {
-                return new WSConnection.SuccessResponse('actionoutline', action.getOutline());
-            } else {
-                return new WSConnection.ErrorResponse('UnknownActionType', `Unknown event action type '${data.actionType}`);
-            }
-        } else {
-            return new WSConnection.ErrorResponse('InvalidArguments', 'No action event type provided');
-        }
     }
 
     @ControlPanelRequest('createEvent', WSConnection.AcceptAny)

@@ -161,7 +161,8 @@ export class StringSelectProperty extends StringProperty {
     toJSON() : any {
         return {
             ...super.toJSON(),
-            options: this.getOptions()
+            options: this.getOptions(),
+            typeAliasFor: (<any>this).typeAliasFor //SavablePropertyGroup may assign the typeAliasFor property if required (see SavablePropertyGroup.scanForProperties())
         }
     }
 }
@@ -173,8 +174,11 @@ export class StringSelectProperty extends StringProperty {
  */
 export class SubGroupProperty<T extends SavablePropertyGroup> extends ValidatedProperty<T> {
     type = 'subgroup';
-    constructor(name: string, private typeAlias: StringProperty, private fromTypeStore: SubTypeStore<T>) {
+    readonly id: string;
+    constructor(name: string, readonly typeAlias: StringProperty, private fromTypeStore: SubTypeStore<T>) {
         super(name);
+        this.id = uuidv4();
+        ControlPanelHandler.getInstance().registerHandler(`property/subgroup/${this.id}/outline:get`, isString, (a) => this.getOutlineForAlias(a));
     }
 
     acceptAny(value: any) : T {
@@ -188,6 +192,27 @@ export class SubGroupProperty<T extends SavablePropertyGroup> extends ValidatedP
         } else {
             return null;
         }
+    }
+
+    //Control panels use this method to fetch the outline for a SubGroup when a different typeAlias is selected by the user.
+    //eg. Fetching the event logic outline when the user changes the logicType property of a UserEvent.
+    getOutlineForAlias(alias: string): WSConnection.WSPendingResponse {
+        let targetType = this.fromTypeStore.getInstanceOf(alias);
+        if (targetType != null) {
+            return new WSConnection.SuccessResponse('Outline', targetType.getOutline());
+        } else {
+            return new WSConnection.ErrorResponse('InvalidAlias', `There is no type matching alias '${alias}'`);
+        }
+    }
+
+    toJSON() {
+        return {
+            ...super.toJSON(), id: this.id
+        }
+    }
+
+    static isInstance(obj: any) : obj is SubGroupProperty<any> {
+        return (obj.acceptAny && obj.type === 'subgroup');
     }
 }
 
@@ -234,11 +259,7 @@ export class TreePathProperty extends ValidatedProperty<string> {
     constructor(name: string, readonly tree: Tree<any, any>) {
         super(name, '');
         this.id = uuidv4();
-        ControlPanelHandler.getInstance().registerHandler(`property/treepath/${this.id}/node:get`, this.isString, (n: string) => this.getTreeNodeRequest(n));
-    }
-
-    private isString(obj: any) : obj is string {
-        return (typeof obj) === 'string';
+        ControlPanelHandler.getInstance().registerHandler(`property/treepath/${this.id}/node:get`, isString, (n: string) => this.getTreeNodeRequest(n));
     }
 
     //Control panels working with this property send requests to traverse the tree
@@ -273,4 +294,8 @@ export class TreePathProperty extends ValidatedProperty<string> {
             ...super.toJSON(), id: this.id
         }
     }
+}
+
+function isString(obj: any) : obj is string {
+    return (typeof obj) === 'string';
 }

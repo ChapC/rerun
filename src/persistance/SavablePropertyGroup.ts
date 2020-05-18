@@ -1,5 +1,5 @@
 import { IJSONSavable, JSONSavable } from "./JSONSavable";
-import { ValidatedProperty, StringSelectProperty } from "./ValidatedProperty";
+import { ValidatedProperty, SubGroupProperty } from "./ValidatedProperty";
 
 export default abstract class SavablePropertyGroup implements IJSONSavable {
     constructor(public savePath: string) { }
@@ -43,7 +43,6 @@ export default abstract class SavablePropertyGroup implements IJSONSavable {
         return worked;
     }
 
-
     //Returns a JSON object that contains all the object's keys and the FormProperty type of each of them
     //Used to create an object from scratch.
     getOutline() : any {
@@ -54,12 +53,6 @@ export default abstract class SavablePropertyGroup implements IJSONSavable {
             propOutline.propertyType = keyPropPair.prop.getType();
             propOutline.name = keyPropPair.prop.name;
             
-            /*
-            if (keyPropPair.prop.getType() === 'select-string') {
-                //Outlines for select properties should include the available options
-                propOutline.options = (<StringSelectProperty>keyPropPair.prop).getOptions();
-            }
-            */
             this.setValueAt(keyPropPair.key, propOutline, outline);
         });
         return outline;
@@ -70,8 +63,16 @@ export default abstract class SavablePropertyGroup implements IJSONSavable {
         const formProps: KeyFormProperty[] = [];
         for (const key of Object.keys(this)) {
             if (this[key] instanceof ValidatedProperty) {
-                const property = this[key] as ValidatedProperty<any>;
-                formProps.push(new KeyFormProperty(key, property));
+
+                let property = this[key]
+                if (SubGroupProperty.isInstance(property)) {
+                    /*SubGroupProperties change depending on their typeAlias, which is defined by a StringProperty.
+                    To make things easier on the client side, we add a 'lil tag to the StringProperty pointing back to the SubGroupProperty. */
+
+                    (<any> property.typeAlias).typeAliasFor = key;
+                }                
+
+                formProps.push(new KeyFormProperty(key, this[key]));
             }
         }
         return formProps;
