@@ -45,7 +45,6 @@ export class RerunGraphicRenderer implements ContentRenderer {
 
     play() : Promise<void> {
         if (!this.graphicIn) {
-            console.info('Graphic play');
             this.sendGraphicEvent('in', (<GraphicsLayerLocation>this.currentGraphic.location).getLayerRef());
             this.graphicIn = true;
         }
