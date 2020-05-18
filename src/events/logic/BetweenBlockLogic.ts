@@ -1,6 +1,6 @@
 import { UserEvent } from "../UserEvent";
 import { Player, PlayerState } from "../../playback/Player";
-import { NumberProperty } from "../../persistance/ValidatedProperty";
+import { IntegerProperty } from "../../persistance/ValidatedProperty";
 import { MediaObject } from "../../playback/MediaObject";
 import { ContentBlock } from "../../playback/ContentBlock";
 import { ShowGraphicAction } from "../actions/ShowGraphicAction";
@@ -14,7 +14,7 @@ export class BetweenBlockLogic extends UserEvent.Logic {
         super('BetweenBlock');
     }
 
-    readonly frequency = new NumberProperty('Frequency', 1);
+    readonly frequency = new IntegerProperty('Frequency', 1);
     private frequencyCounter = 0; //Trigger this event every nth ContentBlock
 
     private listenerCancellers : (() => void)[] = [];
