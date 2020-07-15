@@ -4,6 +4,8 @@ graphics/
 temp/
 #User settings
 userdata/
+#OBS binaries
+/obs/
 
 build
 

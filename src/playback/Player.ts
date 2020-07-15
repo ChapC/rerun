@@ -20,11 +20,11 @@ const uuidv4 = require('uuid/v4');
 *   - "queueChange": The queue was updated. EventData contains the new queue.
 *   - "relTime:[start/end]-[n]": Fired at (or as close as possible to) [n] seconds after the start/before the end.
 *
-* TODO: (long term) With the current Player setup, it's really tricky to overlay content on top of other content. 
+* TODO: (long term) With the current Player setup, it's really tricky to overlay content on top of other content. (the MediaObject pre-roll attribute is a temporary solution)
 *       It works okay for graphics-over-video, as these are handled by two different ContentRenderers, but it's not
 *       currently possible to, for instance, use a semi-transparent video as a stinger on top of other videos. To facilitate this
 *       we might have to look into the concept of video/audio tracks, where multiple instances of ContentRenderers
-*       could run on separate tracks simultaneously. That's a whole thing though, probably involving a move from OBS to ffmpeg directly.
+*       could run on separate tracks simultaneously. That's possible with the new OBS binding!!!!
 */
 @ControlPanelListener
 export class Player extends MultiListenable {
@@ -270,11 +270,11 @@ export class Player extends MultiListenable {
         this.log.info('Preloading the next block (' + nextBlock.media.name + ')');
 
         let loadMedia = () => targetRenderer.loadMedia(nextBlock.media).then(() => {
-            //Check if this block has a preload attribute
+            //Check if this block has a preroll attribute
             if (nextBlock.media.preRollMs && nextBlock.media.preRollMs > 0) {
                 //This block should be started preRollMs before the end of the current block
                 this.one(`relTime:end-${Math.floor(nextBlock.media.preRollMs / 1000)}`, () => {
-                    if (this.queue[0].id === nextBlock.id) { //Check that this block hasn't been deleted from the queue
+                    if (this.queue[0].id === nextBlock.id && targetRenderer.getLoadedMedia() != null) { //Check that this block hasn't been deleted from the queue
                         console.info(`Prerolling content block ${nextBlock.media.name} with ${nextBlock.media.preRollMs}ms`);
                         if (!targetRenderer.getLoadedMedia().isSame(nextBlock.media)) {
                             targetRenderer.loadMedia(nextBlock.media).then(targetRenderer.play);

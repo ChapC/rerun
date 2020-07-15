@@ -1,30 +1,14 @@
 import { MediaObject } from '../MediaObject';
-import { OBSConnection } from '../../OBSConnection';
 import { ContentRenderer } from './ContentRenderer';
-
-class VLCPlaylistItem {
-    hidden: boolean = false; selected: boolean = false; 
-    value: string;
-    constructor(filePath:string) {
-        this.value = filePath;
-    }
-};
-class VLCSettings {
-    loop: boolean = false;
-    playlist: VLCPlaylistItem[] = [];
-
-    constructor(playlist:VLCPlaylistItem[]) {
-        this.playlist = playlist;
-    }
-}
+import { OBSSource, OBSBool, OBSString, OBSArray, OBSDataObject, OBSDataValue } from '../../../obs/RerunOBSBinding';
 
 //Controls an OBS VLC source
 export class OBSVideoRenderer implements ContentRenderer {
     supportsBackgroundLoad = false;
     
-    private obsVideoPlayer: OBSConnection.SourceInterface;
-    constructor(obsVideoPlayer:OBSConnection.SourceInterface) {
-        this.obsVideoPlayer = obsVideoPlayer;
+    private vlcSource: OBSSource;
+    constructor(source: OBSSource) {
+        this.vlcSource = source;
     }
 
     private currentMedia: MediaObject = null;
@@ -40,23 +24,19 @@ export class OBSVideoRenderer implements ContentRenderer {
 
         return new Promise((resolve, reject) => {
             //Set the source as invisible (stops playback)
-            this.obsVideoPlayer.setVisible(false).then(() => {
-                //Add the file to the playlist
-                this.obsVideoPlayer.setSettings(new VLCSettings([playlistItem])).then(() => {
-                    this.currentMedia = media;
-                    //Ensure the source fills the whole screen (OBS automatically resizes it to match the video resolution)
-                    this.obsVideoPlayer.centerAndFillScreen().then(resolve).catch(reject);
-                }).catch(reject);
-            }).catch(reject);
+            this.vlcSource.setEnabled(false);
+            //Add the file to the playlist
+            this.vlcSource.updateSettings(new VLCSettings([playlistItem]));
+            this.currentMedia = media;
+            resolve(); //TODO: The OBS binding should probably expose the above functions as promises, so we don't have to fake them here
         });
     }
 
     stop() : Promise<void> {
         return new Promise((resolve, reject) => {
             //Set the source as invisible (stops playback)
-            this.obsVideoPlayer.setVisible(false).then(() => {
-                resolve();
-            }).catch(reject);
+            this.vlcSource.setEnabled(false);
+            resolve();
         });
     }
 
@@ -71,16 +51,35 @@ export class OBSVideoRenderer implements ContentRenderer {
 
         return new Promise((resolve, reject) => {
             //Make the source visible, starting playback
-            this.obsVideoPlayer.setVisible(true).then(resolve).catch(reject);
+            this.vlcSource.setEnabled(true);
+            resolve();
         });
     }
 
     restartMedia() : Promise<void> {
         //Make the source invisible then visible, which restarts playback
         return new Promise((resolve, reject) => {
-            this.obsVideoPlayer.setVisible(false).then(() => {
-                setTimeout(() => this.obsVideoPlayer.setVisible(true).then(resolve).catch(reject), 100); //OBS won't do it without a delay          
-            });
+            this.vlcSource.restartMedia();
+            resolve();
         });
     }
+}
+
+class VLCPlaylistItem implements OBSDataObject {
+    hidden = new OBSBool(false); 
+    selected = new OBSBool(false); 
+    value: OBSString;
+    constructor(filePath: string) {
+        this.value = new OBSString(filePath);
+    }
+    [key: string] : OBSDataValue;
+};
+class VLCSettings {
+    loop = new OBSBool(false);
+    playlist: OBSArray;
+
+    constructor(playlist: VLCPlaylistItem[]) {
+        this.playlist = new OBSArray(playlist);
+    }
+    [key: string] : OBSDataValue;
 }

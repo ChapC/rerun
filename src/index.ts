@@ -8,10 +8,8 @@ import { OBSVideoRenderer } from './playback/renderers/OBSVideoRenderer';
 import { RerunGraphicRenderer } from './playback/renderers/RerunGraphicRenderer';
 import { ContentBlock } from "./playback/ContentBlock";
 import { WebsocketHeartbeat } from './helpers/WebsocketHeartbeat';
-import { OBSConnection } from './OBSConnection';
 import { UserEventManager } from "./events/UserEventManager";
 import { GraphicManager, GraphicLayerReference } from "./graphiclayers/GraphicManager";
-import { LocalDirectorySource } from './contentsources/LocalDirectorySource';
 import { ContentSourceManager } from "./contentsources/ContentSourceManager";
 import { VideoJSRenderer } from "./playback/renderers/videojs/VideoJSRenderer";
 import { Request, Response } from "express";
@@ -27,6 +25,7 @@ import { ShowGraphicAction } from "./events/actions/ShowGraphicAction";
 import { WSConnection } from "./helpers/WebsocketConnection";
 import { InBlockLogic } from "./events/logic/InBlockLogic";
 import { BetweenBlockLogic } from "./events/logic/BetweenBlockLogic";
+import OBS, { GraphicsModule, SpeakerLayout, EncoderConfig, VideoEncoderType, AudioEncoderType, OBSString, OBSInt, OBSClient, OBSOrder, OBSBool } from '../obs/RerunOBSBinding'; 
 
 const express = require('express');
 const app = express();
@@ -41,23 +40,13 @@ const supportedVideoExtensions = ['.mp4', '.mkv', '.flv', '.avi', '.m4v', '.mov'
 const saveFolder = path.join(__dirname, 'userdata');
 
 //State type definition
-type OBSSourceMap = {
-    localVideo: OBSConnection.SourceInterface, webVideo: OBSConnection.SourceInterface,
-    rtmp: OBSConnection.SourceInterface
-};
-
-class OBSStateObject {
-    connection: OBSConnection; 
-    sources: OBSSourceMap = {} as OBSSourceMap;
-};
-
 export type ContentTypeRendererMap = {[contentType in MediaObject.ContentType] : {renderer: ContentRenderer, focus: Function}};
 export class RerunStateObject {
     startup: StartupSteps;
     localIP: string;
     server: any; //ExpressJS server
     alerts: AlertContainer;
-    obs: OBSStateObject; 
+    obs: OBSClient;
     renderers: ContentTypeRendererMap = {} as ContentTypeRendererMap;
     userSettings: RerunUserSettings;
     graphicsManager: GraphicManager;
@@ -138,18 +127,68 @@ rerunState.startup.appendStep("Web server", (rerunState, l) => {
     rerunState.server = null;
 });
 
-rerunState.startup.appendStep("OBS connection", (rerunState, l) => {
-    l.info("Connecting to OBS...");
-    let obsState : OBSStateObject = new OBSStateObject();
-    rerunState.obs = obsState;
-    
-    const obsAddress = rerunState.userSettings.obsAddress.getValue();
-    obsState.connection = new OBSConnection(obsAddress, rerunState);
+rerunState.startup.appendStep("OBS", (rerunState, l) => {
+    let moduleBinPath = path.resolve(process.cwd(), 'obs/bin/x64')
+    let moduleDataPath = path.resolve(process.cwd(), 'obs/data/plugins')
+    let moduleConfigDir = path.resolve(process.cwd(), 'obs/data/plugin-config');
 
-    return obsState.connection.connect();
+    //Launch OBS
+    l.info('Starting OBS...');
+    const actualWorkingDir = process.cwd();
+    process.chdir(moduleBinPath);
+    let initialized = OBS.init(
+        //Video settings
+        {
+            module: GraphicsModule.Direct3D,
+            fps: 30,
+            width: 1920, height: 1080
+        },
+        //Audio settings
+        {
+            samples: 48000,
+            speakerLayout: SpeakerLayout.Stereo
+        },
+        moduleConfigDir
+    );
+
+    if (!initialized) {
+        return Promise.reject('Failed to initialize OBS');
+    }
+
+    //Import required modules
+    obsLoadAllModules(moduleBinPath, moduleDataPath, [
+        'obs-x264', 'obs-ffmpeg', 'obs-outputs', 'rtmp-services', 'obs-browser', 'vlc-video'
+    ]);
+
+    //Configure A/V encoders
+    const videoEncoder: EncoderConfig = {
+        encoder: VideoEncoderType.x264,
+        encoderSettings: {
+            rate_control: new OBSString('CBR'),
+            bitrate: new OBSInt(2500),
+            keyint_sec: new OBSInt(2),
+            preset: new OBSString('veryfast')
+        }
+    };
+    
+    const audioEncoder: EncoderConfig = {
+        encoder: AudioEncoderType.AAC,
+        encoderSettings: {
+            bitrate: new OBSInt(160)
+        }
+    };
+    
+    l.info('Setting up encoders...');
+    OBS.setupEncoders(videoEncoder, audioEncoder);
+
+    l.info('Setup complete');
+    process.chdir(actualWorkingDir);
+
+    OBS.openPreviewWindow();
+    rerunState.obs = OBS;
+    return Promise.resolve();
 }, function cleanup() {
-    rerunState.obs.connection.disconnect();
-    rerunState.obs = null;
+    OBS.shutdown();
 });
 
 rerunState.startup.appendStep("Graphics packages", (rerunState, l) => {
@@ -177,11 +216,11 @@ rerunState.startup.appendStep("Content renderers", (rerunState, l) => {
     l.info('Preparing content renderers...');
 
     //Local video renderer
-    const localVidRenderer = new OBSVideoRenderer(rerunState.obs.sources.localVideo);
-    //Ensure the OBS source is deactivated to start with
-    localVidRenderer.stop();
+    let vlcSource = rerunState.obs.getMainScene().addSource('localvideo', 'vlc_source', { loop: new OBSBool(false) });
+    const localVidRenderer = new OBSVideoRenderer(vlcSource);
+    localVidRenderer.stop();  //Ensure the OBS source is deactivated to start with
     rerunState.renderers[MediaObject.ContentType.LocalFile] = {
-        renderer: localVidRenderer, focus: () => rerunState.obs.connection.moveSourceToTop(rerunState.obs.sources.localVideo)
+        renderer: localVidRenderer, focus: () => vlcSource.changeOrder(OBSOrder.MOVE_TO_TOP)
     };
 
     //Graphic title renderer
@@ -191,9 +230,12 @@ rerunState.startup.appendStep("Content renderers", (rerunState, l) => {
     };
 
     //Web video renderer
-    const webVidRenderer = new VideoJSRenderer(rerunState.obs.sources.webVideo, );
+    let webSource = rerunState.obs.getMainScene().addSource('webvideo', 'browser_source', {
+        width: new OBSInt(1920), height: new OBSInt(1080), reroute_audio: new OBSBool(true)
+    });
+    const webVidRenderer = new VideoJSRenderer(webSource);
     rerunState.renderers[MediaObject.ContentType.WebStream] = {
-        renderer: webVidRenderer, focus: () => rerunState.obs.connection.moveSourceToTop(rerunState.obs.sources.webVideo)
+        renderer: webVidRenderer, focus: () => webSource.changeOrder(OBSOrder.MOVE_TO_TOP)
     };
 
     //Open the websocket endpoint for VideoJS clients
@@ -393,4 +435,16 @@ function injectIPIntoHTML(pathToHTML:PathLike, ipAddress:string) : string {
     headTag.insertBefore(ipScriptTag, headTag.firstChild);
 
     return graphicDom.serialize();
+}
+
+function obsLoadAllModules(binDirectory: string, dataDirectory: string, moduleNames: string[]) {
+    for (let moduleName of moduleNames) {
+        try {
+            let fullBinarypath = path.join(binDirectory, moduleName + '.dll');
+            let fullDataPath = path.join(dataDirectory, moduleName);
+            OBS.loadModule(fullBinarypath, fullDataPath);
+        } catch (ex) {
+            console.error('Failed to load module ' + moduleName);
+        }
+    }
 }

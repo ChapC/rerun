@@ -11,16 +11,6 @@ export default class RerunUserSettings extends SavablePropertyGroup {
     constructor(savePath:string, rerunState: RerunStateObject) {
         super(savePath);
         this.saveOnChange();
-
-        this.obsAddress.addChangeListener((newAddress) => {
-            if (rerunState.startup.didStartSuccessfully()) {
-                //The app's running, so change the current OBS connection
-                rerunState.obs.connection.connect(newAddress).catch((error) => console.error("Couldn't connect to OBS at " + newAddress));
-            } else {
-                //The app didn't start because of this error, so restart
-                rerunState.startup.start();
-            }
-        });
     }
 
     @ControlPanelRequest('getUserSettings')

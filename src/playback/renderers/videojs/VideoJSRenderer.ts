@@ -1,15 +1,15 @@
 import { ContentRenderer } from '../ContentRenderer';
 import { MediaObject } from '../../MediaObject';
-import { OBSConnection } from '../../../OBSConnection';
+import { OBSSource } from '../../../../obs/RerunOBSBinding';
 import WebSocket = require('ws');
 
 export class VideoJSRenderer implements ContentRenderer {
     supportsBackgroundLoad = false;
-    private obsBrowserSource : OBSConnection.SourceInterface;
+    private obsBrowserSource : OBSSource;
     private vjsSocket : WebSocket;
 
-    constructor(obsBrowserSource: OBSConnection.SourceInterface) {
-        this.obsBrowserSource = obsBrowserSource;
+    constructor(obsBrowserSource: OBSSource) {
+        this.obsBrowserSource = obsBrowserSource; //A browser source connected to the local vjs webpage
     }
 
     //This renderer internally maintains a playback state so that if a VJS client connects during playback it will be updated
@@ -21,13 +21,12 @@ export class VideoJSRenderer implements ContentRenderer {
         }
 
         return new Promise((resolve, reject) => {
-            this.obsBrowserSource.setVisible(true).then(() => {
-                this.sendVJSRequest('load', new VJSSource(media)).then(() => {
-                    //Loading done
-                    this.currentMedia = media;
-                    resolve();
-                }).catch(error => reject(error));
-            });
+            this.obsBrowserSource.setEnabled(true);
+            this.sendVJSRequest('load', new VJSSource(media)).then(() => {
+                //Loading done
+                this.currentMedia = media;
+                resolve();
+            }).catch(error => reject(error));
         });
     }
 
