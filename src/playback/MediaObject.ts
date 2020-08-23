@@ -18,15 +18,12 @@ export class MediaObject {
 
     isSame(other: MediaObject) : boolean {
         return (
-            this.name === other.name && this.type === other.type && this.durationMs === other.durationMs 
-            && this.preRollMs === other.preRollMs && this.location.getPath() === other.location.getPath() 
+            this.name === other.name && this.type === other.type && this.durationMs === other.durationMs && this.location.getPath() === other.location.getPath() 
             && this.location.getType() === other.location.getType()
         );
     }
 
-    thumbnail:string = null;
-    preRollMs: number;
-}
+    thumbnail:string = null;}
 
 export namespace MediaObject {
     export enum Status { READY = 'Ready', PENDING = 'Pending', OFFLINE = 'Offline', UNTRACKED = 'Untracked' };
@@ -37,7 +34,7 @@ export namespace MediaObject {
         RTMPStream = 'RTMP stream',
         RerunGraphic = 'Rerun graphic'
     }
-
+    //TODO: This MediaType/ContentType thing is lUDiCrOUs! There has to be an easier way!
     export enum ContentType {
         LocalFile = 'LocalFile',
         WebStream = 'WebStream',

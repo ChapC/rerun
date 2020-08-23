@@ -1,12 +1,12 @@
 import fs, { PathLike, Stats } from "fs";
 import WebSocket = require("ws");
-import { PlayerState } from "../playback/Player";
 import { MediaObject } from "../playback/MediaObject";
 import { Request, Response } from "express";
 import { Tree } from "../helpers/Tree";
 import { ControlPanelListener, ControlPanelRequest } from "../ControlPanelHandler";
 import { WSConnection } from "../helpers/WebsocketConnection";
 import { GraphicsLayerLocation } from "../playback/MediaLocations";
+import { ContentBlock } from "../playback/ContentBlock";
 const recursive = require("recursive-readdir");
 const path = require('path');
 const jsdom = require("jsdom");
@@ -22,20 +22,20 @@ export class GraphicManager {
 
     private serverAddress : string;
     private connectedWebsockets : Map<string, WebSocket[]> = new Map(); //<GraphicsLayerReference.toString(), list of websockets displaying this layer>
-    private fetchPlayerState : () => PlayerState;
+    private fetchPlayingBlocks : () => ContentBlock[];
     private expressApp : any;
 
-    constructor(graphicsFolder: PathLike, serverAddress: string, getPlayerState: () => PlayerState, expressApp: any) {
+    constructor(graphicsFolder: PathLike, serverAddress: string, getPlayingBlocks: () => ContentBlock[], expressApp: any) {
         this.graphicsFolder = graphicsFolder;
         this.serverAddress = serverAddress;
-        this.fetchPlayerState = getPlayerState;
+        this.fetchPlayingBlocks = getPlayingBlocks;
         this.expressApp = expressApp;
     }
 
     //Sends a graphic event to websockets from the target layer (and optionally the target websocket)
     sendGraphicEvent = (event:string, toLayer:GraphicLayerReference, toSocket?:WebSocket) => {
         //Graphic events contain the event name and the player's current state
-        let eventObj = {name: event, playerState: this.fetchPlayerState()}
+        let eventObj = {name: event, playerState: this.fetchPlayingBlocks()}
     
         if (toSocket) { //Send the event to toSocket only
             //We still need to check that toSocket is subscribed to toLayer's events
@@ -71,7 +71,7 @@ export class GraphicManager {
         socketList.push(socket);
 
         //Check if this graphic layer is currently playing and, if so, send the start event now
-        const currentBlock = this.fetchPlayerState().currentBlock;
+        const currentBlock = this.fetchPlayingBlocks()[0];
         if (currentBlock.media.type === MediaObject.MediaType.RerunGraphic) {
             let layerLocation = currentBlock.media.location as GraphicsLayerLocation;
             if (forLayer.isEqual(layerLocation.getLayerRef())) {
@@ -225,8 +225,12 @@ function importGraphicHTML(pathToHTMLFile:string, localIP:string, layer: Graphic
     return graphicDom.serialize();
 }
 
-export function getShortLayerURL(layer: GraphicLayer) {
-    return `/g/${encodeURIComponent(layer.parentPackage.packageName.toLowerCase().replace(/\s/g, ''))}/${encodeURIComponent(layer.name.toLowerCase().replace(/\s/g, ''))}`;
+export function getShortLayerURL(layer: GraphicLayer | GraphicLayerReference) {
+    if (GraphicLayerReference.isInstance(layer)) {
+        return `/g/${encodeURIComponent(layer.packageName.toLowerCase().replace(/\s/g, ''))}/${encodeURIComponent(layer.layerName.toLowerCase().replace(/\s/g, ''))}`;
+    } else {
+        return `/g/${encodeURIComponent(layer.parentPackage.packageName.toLowerCase().replace(/\s/g, ''))}/${encodeURIComponent(layer.name.toLowerCase().replace(/\s/g, ''))}`;
+    }
 }
 
 export function getLongLayerURL(layer: GraphicLayer) {
@@ -326,5 +330,9 @@ export class GraphicLayerReference {
 
     isEqual(other: GraphicLayerReference) {
         return other.packageName === this.packageName && other.layerName === this.layerName;
+    }
+
+    static isInstance(obj: any) : obj is GraphicLayerReference {
+        return obj.packageName && obj.layerName;
     }
 }

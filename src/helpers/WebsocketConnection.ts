@@ -10,6 +10,8 @@ import { MultiListenable } from './MultiListenable';
  * Handlers for requests are defined with addRequestHandler.
  * Websocket lifecycle callbacks are also provided via MultiListenable.
 */
+//TODO: This WS protocol should support a Pub/Sub system. The current onAlert method should be replaced with a subscribe request. Subscription updates should be cached on the receiving end.
+
 export class WSConnection extends MultiListenable {
     private queuedForSend: string[] = []; //Messages sent before the socket is opened will be queued
 
@@ -69,7 +71,7 @@ export class WSConnection extends MultiListenable {
                             } else {
                                 //It's an error
                                 ws.send(JSON.stringify(
-                                    new Response(message.reqId, 'error', response.message, null, response.code)
+                                    new Response(message.reqId, 'error', response.message, null, response.errorCode)
                                 ));
                             }
                         }
@@ -238,10 +240,10 @@ export namespace WSConnection {
 
     export class ErrorResponse {
         status: string = 'error';
-        constructor(readonly code: string, readonly message?: string) { }
+        constructor(readonly errorCode: string, readonly message?: string) { }
 
         static isInstance(something: any) : something is ErrorResponse {
-            return (something.code != null && something.message != null);
+            return (something.errorCode != null && something.reqId != null);
         }
     }
 

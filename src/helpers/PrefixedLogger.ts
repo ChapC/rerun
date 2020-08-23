@@ -1,3 +1,5 @@
+const colors = require('colors');
+
 export default class PrefixedLogger {
     private prefix: string;
     constructor (loggerName: string) {
@@ -23,9 +25,9 @@ export default class PrefixedLogger {
 
     warn(message?: string, object?: any) {
         if (object) {
-            console.warn(this.prefix + message, object);
+            console.warn(colors.yellow(this.prefix + message), object);
         } else {
-            console.warn(this.prefix + message);
+            console.warn(colors.yellow(this.prefix + message));
         }
     }
 
@@ -35,9 +37,9 @@ export default class PrefixedLogger {
 
     error(message?: string, object?: any) {
         if (object) {
-            console.error(this.prefix + message, object);
+            console.error(colors.red(this.prefix + message), object);
         } else {
-            console.error(this.prefix + message);
+            console.error(colors.red(this.prefix + message));
         }
     }
 }

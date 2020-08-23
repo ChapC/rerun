@@ -58,6 +58,8 @@ export default class StartupSteps {
             return promiseChain.then(() => {
                 if (!this.startupFailed) {
                     return currentStep.run(this.rerunState, new PrefixedLogger("Startup-" + currentStep.key)).then(() => this.succeededStepsCount++);
+                } else {
+                    return Promise.reject();
                 }
             }).catch((error: any) => {
                 this.logger.error(colors.red("Failed to start Rerun - error in " + currentStep.key, error));

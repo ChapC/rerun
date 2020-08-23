@@ -4,11 +4,11 @@ import { OBSSource } from '../../../../obs/RerunOBSBinding';
 import WebSocket = require('ws');
 
 export class VideoJSRenderer implements ContentRenderer {
-    supportsBackgroundLoad = false;
+    readonly supportedContentType = MediaObject.ContentType.WebStream;
     private obsBrowserSource : OBSSource;
     private vjsSocket : WebSocket;
 
-    constructor(obsBrowserSource: OBSSource) {
+    constructor(readonly id: number, obsBrowserSource: OBSSource) {
         this.obsBrowserSource = obsBrowserSource; //A browser source connected to the local vjs webpage
     }
 
@@ -21,7 +21,6 @@ export class VideoJSRenderer implements ContentRenderer {
         }
 
         return new Promise((resolve, reject) => {
-            this.obsBrowserSource.setEnabled(true);
             this.sendVJSRequest('load', new VJSSource(media)).then(() => {
                 //Loading done
                 this.currentMedia = media;
@@ -57,6 +56,8 @@ export class VideoJSRenderer implements ContentRenderer {
             }).catch(error => reject(error));
         });
     }
+
+    getOBSSource() { return this.obsBrowserSource; }
 
     //VideoJS websocket connection
     setVJSSocket(socket: WebSocket) : Boolean {

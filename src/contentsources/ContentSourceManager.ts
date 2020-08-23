@@ -82,7 +82,8 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
     }
 
     private onQueueChanged() {
-        if (this.autoPoolOptions.enabled && !this.pullInProgress && this.player.getQueueLength() < this.autoPoolOptions.targetQueueSize) {
+        let newQueueLength = this.player.getQueue().length;
+        if (this.autoPoolOptions.enabled && !this.pullInProgress && newQueueLength < this.autoPoolOptions.targetQueueSize) {
             const sourcePool = this.getAutoSourcePool();
 
             if (sourcePool.length === 0) {
@@ -91,7 +92,7 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
 
             this.pullInProgress = true;
             this.currentPullProgress = 0;
-            this.currentPullTotal = (this.autoPoolOptions.targetQueueSize - this.player.getQueueLength());
+            this.currentPullTotal = (this.autoPoolOptions.targetQueueSize - newQueueLength);
 
             for (let i = 0; i < this.currentPullTotal; i++) {
                 let targetSource : ContentSource;

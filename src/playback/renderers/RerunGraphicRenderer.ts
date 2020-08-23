@@ -1,14 +1,15 @@
 import { ContentRenderer } from './ContentRenderer';
 import { MediaObject } from './../MediaObject';
-import { GraphicLayerReference } from '../../graphiclayers/GraphicManager';
+import { GraphicLayerReference, getShortLayerURL } from '../../graphiclayers/GraphicManager';
 import { GraphicsLayerLocation } from '../MediaLocations';
+import { OBSSource, OBSString } from '../../../obs/RerunOBSBinding';
 
 //Sends graphic events when media starts or stops. Used for title screens.
 export class RerunGraphicRenderer implements ContentRenderer {
-    supportsBackgroundLoad = false;
+    supportedContentType = MediaObject.ContentType.GraphicsLayer;
     
     private sendGraphicEvent: (event: string, forLayer: GraphicLayerReference) => void;
-    constructor(sendGraphicEvent: (event: string, forLayer: GraphicLayerReference) => void) {
+    constructor(readonly id: number, private browserSource: OBSSource, sendGraphicEvent: (event: string, forLayer: GraphicLayerReference) => void) {
         this.sendGraphicEvent = sendGraphicEvent;
     }
 
@@ -26,6 +27,11 @@ export class RerunGraphicRenderer implements ContentRenderer {
                 this.stop();
             }
             this.currentGraphic = media;
+            //Point the browser source to this layer's webpage
+            let url = getShortLayerURL((<GraphicsLayerLocation>this.currentGraphic.location).getLayerRef());
+            this.browserSource.updateSettings({
+                url: new OBSString('http://127.0.0.1:8080' + url)
+            });
         }
         return Promise.resolve();
     }
@@ -45,6 +51,7 @@ export class RerunGraphicRenderer implements ContentRenderer {
 
     play() : Promise<void> {
         if (!this.graphicIn) {
+            this.browserSource.setEnabled(true);
             this.sendGraphicEvent('in', (<GraphicsLayerLocation>this.currentGraphic.location).getLayerRef());
             this.graphicIn = true;
         }
@@ -53,5 +60,9 @@ export class RerunGraphicRenderer implements ContentRenderer {
 
     restartMedia() : Promise<void> {
         return this.play();
+    }
+    
+    getOBSSource(): OBSSource {
+        return this.browserSource;
     }
 }

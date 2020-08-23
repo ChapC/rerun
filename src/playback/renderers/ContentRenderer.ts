@@ -1,7 +1,10 @@
-import {MediaObject} from '../MediaObject';
+import { MediaObject } from '../MediaObject';
+import { OBSSource } from '../../../obs/RerunOBSBinding'
 
 //Describes a renderer that can display certain content types
 export interface ContentRenderer {
+    readonly id: number;
+    readonly supportedContentType: MediaObject.ContentType;
     loadMedia(media:MediaObject) : Promise<void>; //Prepare the renderer for playback
     getLoadedMedia() : MediaObject; //Return the media object that's currently loaded
 
@@ -9,5 +12,5 @@ export interface ContentRenderer {
     stop() : Promise<void>;
     restartMedia() : Promise<void>;
 
-    supportsBackgroundLoad: Boolean; //If false, calling loadMedia() while media is playing will stop that media to load the new one
+    getOBSSource(): OBSSource; //I wanted the content system (at the abstract level) to be separated from OBS but that seems way too complicated :/
 }

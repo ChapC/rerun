@@ -12,11 +12,10 @@ import { UserEventManager } from "./events/UserEventManager";
 import { GraphicManager, GraphicLayerReference } from "./graphiclayers/GraphicManager";
 import { ContentSourceManager } from "./contentsources/ContentSourceManager";
 import { VideoJSRenderer } from "./playback/renderers/videojs/VideoJSRenderer";
-import { Request, Response } from "express";
 import { PathLike } from "fs";
 import { WebVideoDownloader } from './WebVideoDownloader';
 import ControlPanelHandler from './ControlPanelHandler';
-import { GraphicsLayerLocation, WebBufferLocation } from './playback/MediaLocations';
+import { GraphicsLayerLocation, WebBufferLocation, LocalFileLocation } from './playback/MediaLocations';
 import RerunUserSettings from "./RerunUserSettings";
 import { AlertContainer } from "./helpers/AlertContainer";
 import StartupSteps from "./StartupSteps";
@@ -24,8 +23,10 @@ import { JSONSavable } from "./persistance/JSONSavable";
 import { ShowGraphicAction } from "./events/actions/ShowGraphicAction";
 import { WSConnection } from "./helpers/WebsocketConnection";
 import { InBlockLogic } from "./events/logic/InBlockLogic";
-import { BetweenBlockLogic } from "./events/logic/BetweenBlockLogic";
 import OBS, { GraphicsModule, SpeakerLayout, EncoderConfig, VideoEncoderType, AudioEncoderType, OBSString, OBSInt, OBSClient, OBSOrder, OBSBool } from '../obs/RerunOBSBinding'; 
+import RendererPool from "./playback/renderers/RendererPool";
+import RenderHierarchy, { OBSRenderHierarchy } from "./playback/renderers/RenderHierarchy";
+import { mediaObjectFromVideoFile } from "./contentsources/LocalDirectorySource";
 
 const express = require('express');
 const app = express();
@@ -47,7 +48,8 @@ export class RerunStateObject {
     server: any; //ExpressJS server
     alerts: AlertContainer;
     obs: OBSClient;
-    renderers: ContentTypeRendererMap = {} as ContentTypeRendererMap;
+    rendererPool: RendererPool;
+    renderHierarchy: RenderHierarchy;
     userSettings: RerunUserSettings;
     graphicsManager: GraphicManager;
     downloadBuffer: WebVideoDownloader;
@@ -196,7 +198,7 @@ rerunState.startup.appendStep("Graphics packages", (rerunState, l) => {
     const packagePath = './graphics';
 
     //TODO: Create /graphics if it doesn't exist
-    rerunState.graphicsManager = new GraphicManager(packagePath, rerunState.localIP, () => rerunState.player.getState(), app);
+    rerunState.graphicsManager = new GraphicManager(packagePath, rerunState.localIP, () => rerunState.player.getPlayingBlocks(), app);
     
     //Serve up all the static files in the graphics package path (JS, images)
     app.use('/graphics', express.static(packagePath));
@@ -215,53 +217,64 @@ rerunState.startup.appendStep("Graphics packages", (rerunState, l) => {
 rerunState.startup.appendStep("Content renderers", (rerunState, l) => {
     l.info('Preparing content renderers...');
 
+    rerunState.renderHierarchy = new OBSRenderHierarchy(rerunState.obs.getMainScene());
+    rerunState.rendererPool = new RendererPool();
+    //Add a factory to the renderer pool for each supported content type
+
     //Local video renderer
-    let vlcSource = rerunState.obs.getMainScene().addSource('localvideo', 'vlc_source', { loop: new OBSBool(false) });
-    const localVidRenderer = new OBSVideoRenderer(vlcSource);
-    localVidRenderer.stop();  //Ensure the OBS source is deactivated to start with
-    rerunState.renderers[MediaObject.ContentType.LocalFile] = {
-        renderer: localVidRenderer, focus: () => vlcSource.changeOrder(OBSOrder.MOVE_TO_TOP)
-    };
+    let createLocalVideoRenderer = (id: number) => {
+        let vlcSource = rerunState.obs.createSource('localvideo' + id, 'vlc_source', { loop: new OBSBool(false) });
+        return new OBSVideoRenderer(id, vlcSource);
+    }
+    rerunState.rendererPool.addRendererFactory(MediaObject.ContentType.LocalFile, createLocalVideoRenderer);
 
     //Graphic title renderer
-    const graphicTitleRenderer = new RerunGraphicRenderer(rerunState.graphicsManager.sendGraphicEvent);
-    rerunState.renderers[MediaObject.ContentType.GraphicsLayer] = {
-        renderer: graphicTitleRenderer, focus: () => {} //Noop - the graphic renderer is on a user-defined OBS source, we don't control it
-    };
+    let createGraphicRenderer = (id: number) => {
+        let browserSource = rerunState.obs.createSource('graphic' + id, 'browser_source', {
+            width: new OBSInt(1920), height: new OBSInt(1080), reroute_audio: new OBSBool(true), fps_custom: new OBSInt(30) //TODO: Match OBS video settings
+        });
+        return new RerunGraphicRenderer(id, browserSource, rerunState.graphicsManager.sendGraphicEvent);
+    }
+    rerunState.rendererPool.addRendererFactory(MediaObject.ContentType.GraphicsLayer, createGraphicRenderer);
 
+    //TODO: Change the socket behaviour so that individual VJS clients connect to specific renderers.
+    //This could probably be accomplished by having the OBS source connect to /vjs?=rendererId and updating rerunconnector.js to do dat
+/* 
     //Web video renderer
-    let webSource = rerunState.obs.getMainScene().addSource('webvideo', 'browser_source', {
-        width: new OBSInt(1920), height: new OBSInt(1080), reroute_audio: new OBSBool(true)
-    });
-    const webVidRenderer = new VideoJSRenderer(webSource);
-    rerunState.renderers[MediaObject.ContentType.WebStream] = {
-        renderer: webVidRenderer, focus: () => webSource.changeOrder(OBSOrder.MOVE_TO_TOP)
-    };
+    let createWebVideoRenderer = (id: number) => {
+        let webSource = rerunState.obs.createSource('webvideo', 'browser_source', {
+            width: new OBSInt(1920), height: new OBSInt(1080), reroute_audio: new OBSBool(true), shutdown: new OBSBool(true)
+        });
 
-    //Open the websocket endpoint for VideoJS clients
-    app.ws('/vjssocket', function(ws:WebSocket, req:any) {
-        new WebsocketHeartbeat(ws);
-        let accepted = webVidRenderer.setVJSSocket(ws);
-        if (accepted) {
-            ws.on('close', () => webVidRenderer.clearVJSSocket());
-        } else {
-            ws.send('alreadyconnected');
-            ws.close();
-        }
-    });
+
+        //Open the websocket endpoint for VideoJS clients
+        app.ws('/vjssocket', function(ws:WebSocket, req:any) {
+            new WebsocketHeartbeat(ws);
+            let accepted = webVidRenderer.setVJSSocket(ws);
+            if (accepted) {
+                ws.on('close', () => webVidRenderer.clearVJSSocket());
+            } else {
+                ws.send('alreadyconnected');
+                ws.close();
+            }
+        });
+
+        return new VideoJSRenderer(id, webSource);
+    }
+    rerunState.rendererPool.addRendererFactory(MediaObject.ContentType.WebStream, createWebVideoRenderer);
 
     //Serve the VideoJS webpage + static bits
-    const pathToWebpage = path.join(__dirname + '/playback/renderers/videojs/webpage/videojs.html');
+    const pathToWebpage = path.join(__dirname, '/playback/renderers/videojs/webpage/videojs.html');
     const vjsPageWithIP = injectIPIntoHTML(pathToWebpage, rerunState.localIP + ':8080');
 
-    app.use('/vjs', express.static(path.join(__dirname + '/playback/renderers/videojs/webpage'))); 
+    app.use('/vjs', express.static(path.join(__dirname, '/playback/renderers/videojs/webpage'))); 
     app.get('/vjs', function(req:Request, res:Response) {
         res.send(vjsPageWithIP);
-    });
+    }); */
 
     return Promise.resolve();
 }, function cleanup() {
-    rerunState.renderers = null;
+    //rerunState.renderers = null; TODO Add a destroy method to each factory (NOT the ContentRenderer - I still want to try to keep that separate from OBS)
 });
 
 rerunState.startup.appendStep("Download buffer", (rerunState, l) => {
@@ -295,22 +308,18 @@ rerunState.startup.appendStep("Player", (rerunState, l) => {
     const titleScreenGraphicName = 'Title slate';
     const titleScreenGraphicLocation = new GraphicsLayerLocation(new GraphicLayerReference('Clean', 'Title slate'));
     const titleBlock = new ContentBlock('titleBlock', new MediaObject(MediaObject.MediaType.RerunGraphic, titleScreenGraphicName, titleScreenGraphicLocation, Number.POSITIVE_INFINITY));
+    titleBlock.transitionInMs = 1000;
+    titleBlock.transitionOutMs = 800;
+    
+    rerunState.player = new Player(rerunState.rendererPool, rerunState.renderHierarchy, rerunState, titleBlock);
 
-    rerunState.player = new Player(rerunState.renderers, rerunState, titleBlock);
-
-    rerunState.player.on('newCurrentBlock', (newCurrentBlock) => {
-        ControlPanelHandler.getInstance().sendAlert('setPlayerState', rerunState.player.getState());
+    rerunState.player.on('activePlaybackChanged', (newState) => {
+        ControlPanelHandler.getInstance().sendAlert('playerStateChanged', newState);
     });
 
-    rerunState.player.on('queueChange', (newQueue) => {
-        ControlPanelHandler.getInstance().sendAlert('setPlayerState', rerunState.player.getState());
+    rerunState.player.on('queueChanged', (newState) => {
+        ControlPanelHandler.getInstance().sendAlert('playerQueueChanged', newState);
     });
-
-    rerunState.player.on('playbackStateChange', (newPlaybackState) => {
-        ControlPanelHandler.getInstance().sendAlert('setPlayerState', rerunState.player.getState());
-    });
-
-    rerunState.player.on('paused', (pauseReason) => ControlPanelHandler.getInstance().sendAlert('setPlayerState', rerunState.player.getState()));
 
     return Promise.resolve();
 }, function cleanup() {
@@ -370,7 +379,7 @@ rerunState.startup.appendStep("User events", (rerunState, l) => {
         
             //Built-in event logic types
             rerunState.userEventManager.eventLogicTypes.registerSubtype("During a block", (r) => new InBlockLogic(r.player));
-            rerunState.userEventManager.eventLogicTypes.registerSubtype("In-between blocks", (r) => new BetweenBlockLogic(r.player));
+            //rerunState.userEventManager.eventLogicTypes.registerSubtype("In-between blocks", (r) => new BetweenBlockLogic(r.player));
             //Built-in event action types
             rerunState.userEventManager.eventActionTypes.registerSubtype("Show a graphic", (r) => new ShowGraphicAction(r.graphicsManager));
 
@@ -390,7 +399,7 @@ rerunState.startup.appendStep("User events", (rerunState, l) => {
     rerunState.userEventManager = null;
     rerunState.userEventManager.cancelAllListeners();
 });
-
+ 
 rerunState.startup.appendStep("Content sources", (rerunState, l) => {
     l.info('Loading content sources...');
 
@@ -418,8 +427,18 @@ rerunState.startup.appendStep("Content sources", (rerunState, l) => {
     rerunState.contentSourceManager = null;
 });
 
-rerunState.startup.start();
+rerunState.startup.appendStep("Manual graphic layers", (rerunState, l) => {
+    return new Promise((resolve, reject) => {
+        mediaObjectFromVideoFile('C:\\Users\\pangp\\Videos\\YT Testing videos\\My $3,500 Manhattan Apartment ( 1 Bedroom Tour ).mp4').then(( mediaObj ) => {
+            rerunState.player.enqueueBlock(new ContentBlock('bleeap', mediaObj));
+            mediaObjectFromVideoFile("C:\\Users\\pangp\\Videos\\YT Testing videos\\Look At All Those Chickens - Original Uncut Vine.mp4").then((m) => {
+                rerunState.player.enqueueBlock(new ContentBlock('yooo', m));
+            })
+        });
+    });
+}, () => {});
 
+rerunState.startup.start();
 
 function injectIPIntoHTML(pathToHTML:PathLike, ipAddress:string) : string {
     let rawHTML = fs.readFileSync(pathToHTML);

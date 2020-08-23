@@ -1,11 +1,4 @@
 import { RerunStateObject } from './index';
-import fs from 'fs';
-import { ScheduleChange } from './playback/ScheduleChange';
-import { ContentBlock } from './playback/ContentBlock';
-import { MediaObject } from './playback/MediaObject';
-import { LocalDirectorySource, mediaObjectFromVideoFile } from './contentsources/LocalDirectorySource';
-import { mediaObjectFromYoutube } from './contentsources/YoutubeChannelSource';
-import { ContentSource } from './contentsources/ContentSource';
 import { WSConnection } from './helpers/WebsocketConnection';
 import WebSocket from 'ws';
 
@@ -41,9 +34,6 @@ export default class ControlPanelHandler {
 
         //Attach all the stored request handlers onto this socket
         Object.keys(this.requestHandlers).forEach(requestName => this.requestHandlers[requestName](wsConn));
-
-        //Send the current status to the control panel
-        wsConn.sendAlert('setPlayerState', this.rerunState.player.getState());  
     }
 
     private requestHandlers : {[requestName: string] : (ws: WSConnection) => void} = {};

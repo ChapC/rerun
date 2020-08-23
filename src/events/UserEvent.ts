@@ -44,7 +44,7 @@ export namespace UserEvent {
             super(null);
         }
 
-        abstract setTriggerCallback(onTrigger: () => void) : void;
+        abstract setTriggerCallback(onTrigger: () => void) : void; //TODO: Maybe events should be split into passive and active events?
     }
 
     export abstract class Action extends SavablePropertyGroup {

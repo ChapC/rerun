@@ -8,7 +8,7 @@ import { GraphicsLayerLocation } from "../../playback/MediaLocations";
 import { GraphicLayerReference } from "../../graphiclayers/GraphicManager";
 
 const uuidv4 : () => string = require('uuid/v4');
-
+/*
 export class BetweenBlockLogic extends UserEvent.Logic {
     constructor(private player: Player) {
         super('BetweenBlock');
@@ -27,7 +27,7 @@ export class BetweenBlockLogic extends UserEvent.Logic {
         *For a ShowGraphicAction to be triggered between ContentBlocks, a MediaObject pointing to that graphic has to be queued in the player ahead of time.
         *We can't just call triggerEvent() when it's time to show the graphic, as a lot of graphics have a few seconds of "pre-roll" that needs
         *to be played on top of the current media. The player is in charge of all that, so to fit that behaviour into the UserEvent system we cheat a bit.
-        */
+        /
         if (this.parentEvent.actionType.getValue() === 'Show a graphic') {
             //Peek into the action attached to this UserEvent to grab the details of the target graphic
             let gAction = this.parentEvent.action.getValue() as ShowGraphicAction;
@@ -152,3 +152,4 @@ export class BetweenBlockLogic extends UserEvent.Logic {
         this.triggerEvent = onTrigger;
     }
 }
+*/
