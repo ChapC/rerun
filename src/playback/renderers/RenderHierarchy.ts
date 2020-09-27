@@ -37,10 +37,7 @@ export class OBSRenderHierarchy implements RenderHierarchy {
     removeRenderer(renderer: ContentRenderer): void {
         let rendererSceneItem = this.rendererSceneItemMap.get(renderer.id);
         let rendererLayerIndex = this.layers.findIndex(r => r.id == renderer.id);
-        if (!rendererSceneItem) {
-            this.log.warn(`Tried to remove renderer ${renderer.id}, but it was not in the hierarchy`);
-            return;
-        }
+        if (!rendererSceneItem) return;
         this.activeScene.removeSceneItem(rendererSceneItem);
         this.rendererSceneItemMap.delete(renderer.id);
         this.layers.splice(rendererLayerIndex, 1);

@@ -2,7 +2,7 @@ import WebSocket = require("ws");
 import fs from "fs";
 import { ClientRequest } from "http";
 import { MediaObject } from "./playback/MediaObject";
-import { Player } from "./playback/Player";
+import { Player, EnqueuedContentBlock, PlaybackStartRelationship } from "./playback/Player";
 import { ContentRenderer } from './playback/renderers/ContentRenderer';
 import { OBSVideoRenderer } from './playback/renderers/OBSVideoRenderer';
 import { RerunGraphicRenderer } from './playback/renderers/RerunGraphicRenderer';
@@ -11,7 +11,6 @@ import { WebsocketHeartbeat } from './helpers/WebsocketHeartbeat';
 import { UserEventManager } from "./events/UserEventManager";
 import { GraphicManager, GraphicLayerReference } from "./graphiclayers/GraphicManager";
 import { ContentSourceManager } from "./contentsources/ContentSourceManager";
-import { VideoJSRenderer } from "./playback/renderers/videojs/VideoJSRenderer";
 import { PathLike } from "fs";
 import { WebVideoDownloader } from './WebVideoDownloader';
 import ControlPanelHandler from './ControlPanelHandler';
@@ -20,13 +19,12 @@ import RerunUserSettings from "./RerunUserSettings";
 import { AlertContainer } from "./helpers/AlertContainer";
 import StartupSteps from "./StartupSteps";
 import { JSONSavable } from "./persistance/JSONSavable";
-import { ShowGraphicAction } from "./events/actions/ShowGraphicAction";
 import { WSConnection } from "./helpers/WebsocketConnection";
-import { InBlockLogic } from "./events/logic/InBlockLogic";
 import OBS, { GraphicsModule, SpeakerLayout, EncoderConfig, VideoEncoderType, AudioEncoderType, OBSString, OBSInt, OBSClient, OBSOrder, OBSBool } from '../obs/RerunOBSBinding'; 
 import RendererPool from "./playback/renderers/RendererPool";
 import RenderHierarchy, { OBSRenderHierarchy } from "./playback/renderers/RenderHierarchy";
-import { mediaObjectFromVideoFile } from "./contentsources/LocalDirectorySource";
+import { title } from "process";
+import { PlaybackOffset } from "./playback/PlaybackContentNode";
 
 const express = require('express');
 const app = express();
@@ -371,34 +369,34 @@ rerunState.startup.appendStep("Graphics layer socket", (rerunState, l) => {
     });
 }, function cleanup() {});
 
-rerunState.startup.appendStep("User events", (rerunState, l) => {
-    return new Promise((resolve, reject) => {
-        l.info('Fetching events...');
-        try {
-            rerunState.userEventManager = new UserEventManager(path.join(saveFolder, 'events.json'), rerunState);
+// rerunState.startup.appendStep("User events", (rerunState, l) => {
+//     return new Promise((resolve, reject) => {
+//         l.info('Fetching events...');
+//         try {
+//             rerunState.userEventManager = new UserEventManager(path.join(saveFolder, 'events.json'), rerunState);
         
-            //Built-in event logic types
-            rerunState.userEventManager.eventLogicTypes.registerSubtype("During a block", (r) => new InBlockLogic(r.player));
-            //rerunState.userEventManager.eventLogicTypes.registerSubtype("In-between blocks", (r) => new BetweenBlockLogic(r.player));
-            //Built-in event action types
-            rerunState.userEventManager.eventActionTypes.registerSubtype("Show a graphic", (r) => new ShowGraphicAction(r.graphicsManager));
+//             //Built-in event logic types
+//             rerunState.userEventManager.eventLogicTypes.registerSubtype("During a block", (r) => new InBlockLogic(r.player));
+//             //rerunState.userEventManager.eventLogicTypes.registerSubtype("In-between blocks", (r) => new BetweenBlockLogic(r.player));
+//             //Built-in event action types
+//             rerunState.userEventManager.eventActionTypes.registerSubtype("Show a graphic", (r) => new ShowGraphicAction(r.graphicsManager));
 
-            //TODO: Plugins should be able to define their own event logic and action types
+//             //TODO: Plugins should be able to define their own event logic and action types
 
-            //Listeners
-            rerunState.userEventManager.addChangeListener((events) => ControlPanelHandler.getInstance().sendAlert('setEventList', events));
-            rerunState.userEventManager.addChangeListener((events) => JSONSavable.serializeJSON(rerunState.userEventManager.toJSON(), rerunState.userEventManager.savePath))
+//             //Listeners
+//             rerunState.userEventManager.addChangeListener((events) => ControlPanelHandler.getInstance().sendAlert('setEventList', events));
+//             rerunState.userEventManager.addChangeListener((events) => JSONSavable.serializeJSON(rerunState.userEventManager.toJSON(), rerunState.userEventManager.savePath))
             
-            //Try load from saved events
-            JSONSavable.updateSavable(rerunState.userEventManager).then(resolve).catch(reject);
-        } catch (error) {
-            reject(error);
-        }
-    });
-}, function cleanup() {
-    rerunState.userEventManager = null;
-    rerunState.userEventManager.cancelAllListeners();
-});
+//             //Try load from saved events
+//             JSONSavable.updateSavable(rerunState.userEventManager).then(resolve).catch(reject);
+//         } catch (error) {
+//             reject(error);
+//         }
+//     });
+// }, function cleanup() {
+//     rerunState.userEventManager = null;
+//     rerunState.userEventManager.cancelAllListeners();
+// });
  
 rerunState.startup.appendStep("Content sources", (rerunState, l) => {
     l.info('Loading content sources...');
@@ -427,16 +425,35 @@ rerunState.startup.appendStep("Content sources", (rerunState, l) => {
     rerunState.contentSourceManager = null;
 });
 
-rerunState.startup.appendStep("Manual graphic layers", (rerunState, l) => {
-    return new Promise((resolve, reject) => {
-        mediaObjectFromVideoFile('C:\\Users\\pangp\\Videos\\YT Testing videos\\My $3,500 Manhattan Apartment ( 1 Bedroom Tour ).mp4').then(( mediaObj ) => {
-            rerunState.player.enqueueBlock(new ContentBlock('bleeap', mediaObj));
-            mediaObjectFromVideoFile("C:\\Users\\pangp\\Videos\\YT Testing videos\\Look At All Those Chickens - Original Uncut Vine.mp4").then((m) => {
-                rerunState.player.enqueueBlock(new ContentBlock('yooo', m));
-            })
-        });
-    });
-}, () => {});
+rerunState.startup.appendStep('Rules', (rerunState, l) => {
+
+    const titleScreenGraphicName = 'Title slate';
+    const titleScreenGraphicLocation = new GraphicsLayerLocation(new GraphicLayerReference('Clean', 'Title slate'));
+    const titleBlock = new ContentBlock('stingerBlockTitle', new MediaObject(MediaObject.MediaType.RerunGraphic, titleScreenGraphicName, titleScreenGraphicLocation, 5000));
+    titleBlock.transitionInMs = 1000;
+    titleBlock.transitionOutMs = 800;
+
+    let everySecondProvider = (queue: EnqueuedContentBlock[]) => {
+        let blocks = [];
+        for (let i = 0; i < queue.length; i++) {
+            if (i % 2 === 0) {
+                blocks.push({
+                    block: titleBlock,
+                    relativeTarget: queue[i],
+                    startRelationship: PlaybackStartRelationship.Sequenced,
+                    offset: new PlaybackOffset(PlaybackOffset.Type.MsBeforeEnd, titleBlock.transitionInMs)
+                });
+            }
+        }
+        return blocks;
+    }
+
+    rerunState.player.addTempNodeProvider(everySecondProvider);
+
+    return Promise.resolve();
+}, function cleanup() {
+
+});
 
 rerunState.startup.start();
 
