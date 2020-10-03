@@ -1,14 +1,14 @@
 import { SingleListenable } from "../helpers/SingleListenable";
-import SavablePropertyGroup from "./SavablePropertyGroup";
-import SubTypeStore from "../helpers/SubTypeStore";
+import DynamicFactory from "../helpers/DynamicFactory";
 import { Tree } from "../helpers/Tree";
 import ControlPanelHandler from "../ControlPanelHandler";
 import { WSConnection } from "../helpers/WebsocketConnection";
+import { SaveableObject } from "./SaveableObject";
 const uuidv4 = require('uuid/v4');
 
 /**
  * Base class for a getter/setter with built-in value and type validation. 
- * Call trySetValue() with an any to attempt to set the property's value and getValue() to access it.
+ * Call trySetValue() with an `any` to attempt to set the property's value and getValue() to access it.
  * Changes are observable via the SingleListenable extension.
  * 
  * @remarks Used when creating forms for the client-side (where a control is defined for each type of property) and for type-aware serialization.
@@ -52,10 +52,31 @@ export abstract class ValidatedProperty<T> extends SingleListenable<T> {
         return false;
     }
 
+    /**
+     * Check if the ValidatedProperty will accept the given value. Does not modify the property. 
+     */
+    willAcceptValue(value: any) : boolean {
+        let v = value;
+        if (value.name && value.value && value.type) {
+            //This is a serialized FormProperty. Use the value from inside it
+            v = value.value
+        }
+
+        return this.acceptAny(v) != null;
+    }
+
+    /**
+     * Implemented by child classes. 
+     * Return the value to store in the ValidatedProperty (usually unmodified, but you do you) or null to reject the value.
+     */
     protected abstract acceptAny(value: any) : T 
 
     toJSON() : any {
         return { name: this.name, type: this.type, value: this.value };
+    }
+
+    static isInstance(obj: any) : obj is ValidatedProperty<any> {
+        return ((typeof obj.name) === 'string' && obj.type != null);
     }
 }
 
@@ -162,27 +183,26 @@ export class StringSelectProperty extends StringProperty {
         return {
             ...super.toJSON(),
             options: this.getOptions(),
-            typeAliasFor: (<any>this).typeAliasFor //SavablePropertyGroup may assign the typeAliasFor property if required (see SavablePropertyGroup.scanForProperties())
         }
     }
 }
 
 /**
- * Stores a SavablePropertyGroup and allows setting of the whole object at once.
+ * Stores a SaveableObject and allows setting of the whole object at once.
  * 
- * @remarks Allows SavablePropertyGroups to be nested within another. See SubTypeStore for details.
+ * @remarks Allows SaveableObject to be nested within another. See DynamicFactory for details.
  */
-export class SubGroupProperty<T extends SavablePropertyGroup> extends ValidatedProperty<T> {
-    type = 'subgroup';
+export class NestedSaveableSelectProperty<T extends SaveableObject> extends ValidatedProperty<T> {
+    type = 'select-nestedsaveable';
     readonly id: string;
-    constructor(name: string, readonly typeAlias: StringProperty, private fromTypeStore: SubTypeStore<T>) {
+    constructor(name: string, readonly typeAlias: StringProperty, private subGroupFactory: DynamicFactory<T>) {
         super(name);
         this.id = uuidv4();
         ControlPanelHandler.getInstance().registerHandler(`property/subgroup/${this.id}/outline:get`, isString, (a) => this.getOutlineForAlias(a));
     }
 
     acceptAny(value: any) : T {
-        let targetType = this.fromTypeStore.getInstanceOf(this.typeAlias.getValue());
+        let targetType = this.subGroupFactory.constructInstanceOf(this.typeAlias.getValue());
         if (targetType != null) {
             if (targetType.deserialize(value)) {
                 return targetType;
@@ -197,7 +217,7 @@ export class SubGroupProperty<T extends SavablePropertyGroup> extends ValidatedP
     //Control panels use this method to fetch the outline for a SubGroup when a different typeAlias is selected by the user.
     //eg. Fetching the event logic outline when the user changes the logicType property of a UserEvent.
     getOutlineForAlias(alias: string): WSConnection.WSPendingResponse {
-        let targetType = this.fromTypeStore.getInstanceOf(alias);
+        let targetType = this.subGroupFactory.constructInstanceOf(alias);
         if (targetType != null) {
             return new WSConnection.SuccessResponse('Outline', targetType.getOutline());
         } else {
@@ -211,7 +231,7 @@ export class SubGroupProperty<T extends SavablePropertyGroup> extends ValidatedP
         }
     }
 
-    static isInstance(obj: any) : obj is SubGroupProperty<any> {
+    static isInstance(obj: any) : obj is NestedSaveableSelectProperty<any> {
         return (obj.acceptAny && obj.type === 'subgroup');
     }
 }

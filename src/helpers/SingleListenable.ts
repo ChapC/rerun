@@ -20,3 +20,9 @@ export abstract class SingleListenable<EventType> {
         Object.values(this.listeners).forEach(listener => listener(changed));
     }
 }
+
+export class ControllableSingleListenable<EventType> extends SingleListenable<EventType> {
+    trigger(changed: EventType) {
+        this.triggerListeners(changed);
+    }
+}

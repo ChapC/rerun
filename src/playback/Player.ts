@@ -253,6 +253,10 @@ export class Player extends MultiListenable {
             });
         }
 
+        playingNode.setPlaybackStatus(track.activeBlock.transitionInMs > 0 ? NodePlaybackStatus.TransitioningIn : NodePlaybackStatus.Playing);
+        //NOTE: We set the playback status now to prevent the player loop from jumping on this node again, but the playback status
+        //is set again in the actual addToHierarchyAndPlay promise to get a more accurate timestamp.
+
         if (track.activeRenderer.getLoadedMedia() != track.activeBlock.media) {
             track.activeRenderer.loadMedia(track.activeBlock.media).then(addToHierarchyAndPlay);
         } else {

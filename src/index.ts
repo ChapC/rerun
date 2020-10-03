@@ -8,7 +8,6 @@ import { OBSVideoRenderer } from './playback/renderers/OBSVideoRenderer';
 import { RerunGraphicRenderer } from './playback/renderers/RerunGraphicRenderer';
 import { ContentBlock } from "./playback/ContentBlock";
 import { WebsocketHeartbeat } from './helpers/WebsocketHeartbeat';
-import { UserEventManager } from "./events/UserEventManager";
 import { GraphicManager, GraphicLayerReference } from "./graphiclayers/GraphicManager";
 import { ContentSourceManager } from "./contentsources/ContentSourceManager";
 import { PathLike } from "fs";
@@ -23,8 +22,8 @@ import { WSConnection } from "./helpers/WebsocketConnection";
 import OBS, { GraphicsModule, SpeakerLayout, EncoderConfig, VideoEncoderType, AudioEncoderType, OBSString, OBSInt, OBSClient, OBSOrder, OBSBool } from '../obs/RerunOBSBinding'; 
 import RendererPool from "./playback/renderers/RendererPool";
 import RenderHierarchy, { OBSRenderHierarchy } from "./playback/renderers/RenderHierarchy";
-import { title } from "process";
 import { PlaybackOffset } from "./playback/PlaybackContentNode";
+import { SaveableUtils } from "./persistance/SaveableUtils";
 
 const express = require('express');
 const app = express();
@@ -53,7 +52,6 @@ export class RerunStateObject {
     downloadBuffer: WebVideoDownloader;
     contentSourceManager: ContentSourceManager;
     player: Player;
-    userEventManager: UserEventManager;
 };
 const rerunState = new RerunStateObject();
 ControlPanelHandler.setRerunState(rerunState);
@@ -94,8 +92,10 @@ rerunState.startup.appendStep("Save data", (rerunState, l) => {
     return new Promise((resolve, reject) => {
         fs.mkdir(saveFolder, { recursive: true }, (error) => {
             if (!error) {
-                rerunState.userSettings = new RerunUserSettings(path.join(saveFolder, 'settings.json'), rerunState);
-                JSONSavable.updateSavable(rerunState.userSettings).then(resolve).catch(reject);
+                rerunState.userSettings = new RerunUserSettings();
+                let savePath = path.join(saveFolder, 'settings.json');
+                SaveableUtils.updateMutableFromFile(rerunState.userSettings, savePath).then(resolve).catch(reject);
+                rerunState.userSettings.onPropertiesUpdated(() => SaveableUtils.writeSaveableToFile(rerunState.userSettings, savePath));
             } else {
                 l.error(error);
                 reject("Couldn't access user data folder");
@@ -103,6 +103,7 @@ rerunState.startup.appendStep("Save data", (rerunState, l) => {
         });
     });
 }, function cleanup() {
+    rerunState.userSettings.cancelAllPropertiesUpdatedListeners();
     rerunState.userSettings = null;
 });
 
@@ -404,7 +405,7 @@ rerunState.startup.appendStep("Content sources", (rerunState, l) => {
     return new Promise((resolve, reject) => {
         try {
             rerunState.contentSourceManager = new ContentSourceManager(path.join(saveFolder, 'contentsources.json'), rerunState.player);
-            JSONSavable.updateSavable(rerunState.contentSourceManager).then(() => {
+            JSONSavable.updateSavable(rerunState.contentSourceManager, rerunState.contentSourceManager.savePath).then(() => {
                 rerunState.contentSourceManager.addChangeListener((sources) => {
                     ControlPanelHandler.getInstance().sendAlert('setContentSources', sources);
                 });
