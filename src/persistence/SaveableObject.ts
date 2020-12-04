@@ -4,7 +4,7 @@ import { ValidatedProperty } from './ValidatedProperty';
 
 /**
  * An object with a series of serializable properties grouped together, like a form.
- * SaveableObject provides automatic group serialization/deserialization and outline creation 
+ * SaveableObject provides automatic group serialization/deserialization
  * for all properties decorated with @SaveableProperty.
  * 
  * @remarks You should probably extend either `ImmutableSavableObject` or `MutableSavableObject` instead of this class directly
@@ -32,7 +32,7 @@ export abstract class SaveableObject {
     }
 
     toJSON() {
-        //Automatically serialize all tagged ValidatedProperties on this object
+        //Automatically serialize all tagged ValidatedProperties on this object (and don't serialize other any other properties)
         let obj : {[key: string] : any} = {};
         this.getSaveableProperties().forEach(keyPropPair => obj[keyPropPair.key] = keyPropPair.prop);
         return obj;
@@ -44,6 +44,11 @@ export abstract class SaveableObject {
 class KeyValidatedPropertyPair { constructor(public key: string, public prop: ValidatedProperty<any>) { }; }
 //@SaveableProperty decorator function
 const taggedPropertyMetaKey = Symbol('savablePropertyTagged');
+/**
+ * Marks a property on a SaveableObject for inclusion in the serialization/deserialization process.
+ * 
+ * NOTE: The target property must be a ValidatedProperty.
+ */
 export function SaveableProperty() : (target: any, propertyKey: string) => void {
     return (target, propertyKey) => {
         //Define a list of decorated properties on the instance (target) and the statically-available constructor (target.constructor)
@@ -62,7 +67,13 @@ export function SaveableProperty() : (target: any, propertyKey: string) => void 
     };
 }
 
-type StaticThis<T> = { new (): T }; //Allows the static deserializeToNew method to access the child's this context (don't ask me how idk man)
+/** NOTE:
+ * The only difference between the ISO and ISOWithConstructor classes 
+ * is that ISO automatically grabs this.constructor and calls it
+ * with no parameters, whereas ISOWithConstructor requires the caller
+ * to pass in a constructor function for the object. ISO is just for the convenience of the caller.
+ */
+
 /**
  * A SaveableObject in which the properties are immutable.
  * When deserializing, a new instance of the object is constructed using the values from the provided serialized object.
@@ -70,10 +81,11 @@ type StaticThis<T> = { new (): T }; //Allows the static deserializeToNew method 
  * @remarks Child classes extending ImmutableSaveableObject must not have a custom constructor. If they do, use `ImmutableSaveableObjectWithConstructor` instead.
  */
 export abstract class ImmutableSaveableObject extends SaveableObject {
-    public static deserializeToNew<T extends ImmutableSaveableObject>(this: StaticThis<T>, serializedObject: any) : T {
+    private readonly iHasConstructor = false;
+    public deserializeToNew<T extends ImmutableSaveableObject>(serializedObject: any) : T {
         let taggedPropertyKeys: string[] = Reflect.getMetadata(taggedPropertyMetaKey, this);
         
-        let newObj: T = new this; //Create a new instance of the child class
+        let newObj: T = new (<any>this.constructor)(); //Create a new instance of the child class
 
         /*
         * Attempt to read each taggedProperty from serializedObject into the newObj.
@@ -103,6 +115,10 @@ export abstract class ImmutableSaveableObject extends SaveableObject {
 
         return newObj;
     }
+
+    public static isInstance(obj: any) : obj is ImmutableSaveableObject {
+        return obj.iHasConstructor != null && obj.iHasConstructor === false;
+    }
 }
 
 /**
@@ -113,7 +129,8 @@ export abstract class ImmutableSaveableObject extends SaveableObject {
  * @remarks If the child class extending ImmutableSaveableObjectWithConstructor does not have a custom constructor, consider using `ImmutableSaveableObject` instead.
  */
 export abstract class ImmutableSaveableObjectWithConstructor extends SaveableObject {
-    public static deserializeToNew<T extends ImmutableSaveableObject>(constructor: () => T, serializedObject: any) : T {
+    private readonly iHasConstructor = true;
+    public deserializeToNew<T extends ImmutableSaveableObjectWithConstructor>(constructor: () => T, serializedObject: any) : T {
         let taggedPropertyKeys: string[] = Reflect.getMetadata(taggedPropertyMetaKey, this);
         
         let newObj: T = constructor(); //Create a new instance of the child class using the provided constructor
@@ -142,6 +159,10 @@ export abstract class ImmutableSaveableObjectWithConstructor extends SaveableObj
         }
 
         return newObj;
+    }
+
+    public static isInstance(obj: any) : obj is ImmutableSaveableObjectWithConstructor {
+        return obj.iHasConstructor != null && obj.iHasConstructor === true;
     }
 }
 
@@ -192,5 +213,9 @@ export abstract class MutableSaveableObject extends SaveableObject {
     
     public cancelAllPropertiesUpdatedListeners() {
         this.listenable.cancelAllListeners();
+    }
+
+    public static isInstance(obj: any) : obj is MutableSaveableObject {
+        return (typeof obj.deserializeFrom) === 'function';
     }
 }

@@ -1,7 +1,7 @@
 import { ContentSource } from './ContentSource';
 import { SingleListenable } from '../helpers/SingleListenable';
 import { Player } from '../playback/Player'; 
-import { IJSONSavable, JSONSavable } from '../persistance/JSONSavable';
+import { IJSONSavable, JSONSavable } from '../persistence/JSONSavable';
 import { LocalDirectorySource } from './LocalDirectorySource';
 import ControlPanelHandler, { ControlPanelListener, ControlPanelRequest } from '../ControlPanelHandler';
 import { WSConnection } from '../helpers/WebsocketConnection';

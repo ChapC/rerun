@@ -1,7 +1,6 @@
-import { RerunStateObject } from "..";
+import { PublicRerunComponents } from "..";
 
-
-type Constructor<T> = (rerunState: RerunStateObject) => T;
+type Constructor<T> = (rerunComponents: PublicRerunComponents) => T;
 /**
  * A dynamic factory that maps strings to constructors of type T.
  * If a constructor matching a provided string is found, then that constructor is invoked and the resulting instance of T returned.
@@ -10,14 +9,14 @@ type Constructor<T> = (rerunState: RerunStateObject) => T;
 export default class DynamicFactory<T> { 
     private constructorMap : {[typeAlias: string] : Constructor<T>} = {};
 
-    constructor(private rerunState : RerunStateObject) {};
+    constructor(private rerunComponents : PublicRerunComponents) {};
 
     /**
      * Add a new constructor to the factory.
      * @param alias Name the constructor will be referred to with
      * @param constructor Function returning an instance of type T
      */
-    registerSubclass(alias: string, constructor: Constructor<T>) {
+    registerConstructor(alias: string, constructor: Constructor<T>) {
         this.constructorMap[alias] = constructor;
     }
 
@@ -30,7 +29,7 @@ export default class DynamicFactory<T> {
     constructInstanceOf(alias: string) : T {
         let targetConstructor = this.constructorMap[alias];
         if (targetConstructor) {
-            return targetConstructor(this.rerunState);
+            return targetConstructor(this.rerunComponents);
         } else {
             return null;
         }
@@ -44,8 +43,7 @@ export default class DynamicFactory<T> {
     }
 
     /**
-     * Check if a constructor is registered for the given alias
-     * @param alias Alias to check
+     * Check if a constructor is registered for the given alias.
      */
     isKnownAlias(alias: string) : boolean {
         return this.constructorMap[alias] != null;

@@ -79,7 +79,7 @@ export class PlaybackOffset {
 }
 
 export namespace PlaybackOffset {
-    export enum Type { MsAfterStart, MsBeforeEnd, Percentage }
+    export enum Type { MsAfterStart = 'After start', MsBeforeEnd = 'Before end', Percentage = 'Percentage' }
 }
 
 export enum NodePlaybackStatus { Queued = 'Queued', TransitioningIn = 'TransitionIn', Playing = 'Playing', TransitioningOut = 'TransitionOut', Finished = 'Finished' };

@@ -1,4 +1,5 @@
 import {MediaObject} from './MediaObject';
+const uuidv4 = require('uuid/v4');
 
 //A MediaObject with additional playback-related information, ready to be added to the play queue
 export class ContentBlock {
@@ -12,8 +13,16 @@ export class ContentBlock {
     transitionInMs = 0;
     transitionOutMs = 0;
 
-    constructor(id:string, media:MediaObject) {
-        this.id = id;
+    /**
+     * @param media The MediaObject this block will play
+     * @param id (Optional) The ID to give this ContentBlock. By default a random unique ID will be generated.
+     */
+    constructor(media:MediaObject, id?:string) {
+        if (id) {
+            this.id = id;
+        } else {
+            this.id = uuidv4();
+        }
         this.media = media;
     }
 
@@ -27,7 +36,7 @@ export class ContentBlock {
     static clone(source: ContentBlock, destination?: ContentBlock) : ContentBlock {
         let c = destination;
         if (!destination) {
-            c = new ContentBlock(source.id, source.media);
+            c = new ContentBlock(source.media, source.id);
         } else {
             c.id = source.id;
             c.media = source.media;

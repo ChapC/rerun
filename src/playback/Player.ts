@@ -1,12 +1,10 @@
 import {ContentBlock} from './ContentBlock';
 import {MediaObject} from './MediaObject';
-import {ContentRenderer} from './renderers/ContentRenderer';
-import {ContentTypeRendererMap, RerunStateObject} from '../index';
-import {IntervalMillisCounter} from '../helpers/IntervalMillisCounter';
+import {PublicRerunComponents} from '../index';
 import {MultiListenable} from '../helpers/MultiListenable';
 import PrefixedLogger from '../helpers/PrefixedLogger';
 import { WSConnection } from '../helpers/WebsocketConnection';
-import ControlPanelHandler, { ControlPanelRequest, ControlPanelListener } from '../ControlPanelHandler';
+import { ControlPanelRequest, ControlPanelListener } from '../ControlPanelHandler';
 import { mediaObjectFromVideoFile } from "../contentsources/LocalDirectorySource";
 import fs from 'fs';
 import { mediaObjectFromYoutube } from "../contentsources/YoutubeChannelSource";
@@ -15,8 +13,6 @@ import PlaybackContentNode, { NodePlaybackStatus, PlaybackOffset } from './Playb
 import ContentRenderTrack from './renderers/ContentRenderTrack';
 import RendererPool, { PooledContentRenderer } from './renderers/RendererPool';
 import RenderHierarchy from './renderers/RenderHierarchy';
-const colors = require('colors');
-const uuidv4 = require('uuid/v4');
 
 /* Events
 *   - "activePlaybackChanged": The list of active ContentBlocks changed.
@@ -34,7 +30,7 @@ export class Player extends MultiListenable {
     private rendererPool: RendererPool;
     private renderHierarchy: RenderHierarchy;
 
-    constructor(rendererPool: RendererPool, renderHierarchy: RenderHierarchy, private rerunState: RerunStateObject, defaultBlock: ContentBlock) { //TODO: Remove rerunState parameters in favour of specific dependencies
+    constructor(rendererPool: RendererPool, renderHierarchy: RenderHierarchy, private rerunComponents: PublicRerunComponents, defaultBlock: ContentBlock) { //TODO: Remove rerunComponents parameters in favour of specific dependencies
         super();
         this.rendererPool = rendererPool;
         this.renderHierarchy = renderHierarchy;
@@ -401,8 +397,12 @@ export class Player extends MultiListenable {
         Accessors outside this section are intended for internal use by other application components or plugins.
     */
 
-    //Add a block to the end of the queue
-    public enqueueBlock(block: ContentBlock) {
+    /**
+     * Add a ContentBlock to be played sequentially at the end of the player queue.
+     * @param block The block to enqueue.
+     * @returns A node ID representing the block's position in the queue.
+     */
+    public enqueueBlock(block: ContentBlock) : number {
         //Find the end of the primary path
         let node = this.playbackFront[0];
         while (node.children.length > 0) {
@@ -414,15 +414,19 @@ export class Player extends MultiListenable {
         this.nodeTreeMap.set(newNode.id, newNode);
         this.reevaluateTempNodes();
         this.fireEvent('queueChanged', this.getQueue());
+        return newNode.id;
     }
 
-    //Remove a block from the queue
-    public dequeueNode(queuedId: number) {
+    /**
+     * Remove a ContentBlock from the player queue.
+     * @param queuedNodeId Node ID of the block to remove
+     */
+    public dequeueNode(queuedNodeId: number) {
         //Find this node in the tree
-        let targetNode = this.nodeTreeMap.get(queuedId);
+        let targetNode = this.nodeTreeMap.get(queuedNodeId);
         if (!targetNode) return;
 
-        if (targetNode.getPlaybackStatus() == NodePlaybackStatus.Playing) {
+        if (targetNode.getPlaybackStatus() !== NodePlaybackStatus.Queued) {
             return; //Cannot remove a node that's currently playing (the UI shouldn't allow this anyway)
         }
 
@@ -434,10 +438,16 @@ export class Player extends MultiListenable {
         this.fireEvent('queueChanged', this.getQueue());
     }
 
-    //Modify a node in the queue
+    /**
+     * Update a queued node with a modified ContentBlock.
+     * Nodes that are currently active (playing or transitioning in/out) cannot be updated.
+     * @param queuedNodeId Node ID to update
+     * @param newBlock The updated block to replace the target node with
+     * @returns True if the target node was updated, False if the target node is currently active or is no longer in the queue
+     */
     public updateQueuedNode(queuedNodeId: number, newBlock: ContentBlock) : boolean {
         let targetNode = this.nodeTreeMap.get(queuedNodeId);
-        if (!targetNode || targetNode.getPlaybackStatus() === NodePlaybackStatus.Playing) return false;
+        if (!targetNode || targetNode.getPlaybackStatus() !== NodePlaybackStatus.Queued) return false;
 
         //Unload if preloaded anywhere
         if (this.preloadedNodes.has(targetNode.id)) {
@@ -451,11 +461,18 @@ export class Player extends MultiListenable {
         return true;
     }
 
-    //Move a block to another position in the queue
-    public reorderQueuedNode(queuedIdToMove: number, queuedIdTarget: number, placeBefore: boolean) : boolean {
-        let nodeToMove = this.nodeTreeMap.get(queuedIdToMove);
-        let targetNode = this.nodeTreeMap.get(queuedIdTarget);
+    /**
+     * Move a node to another position in the queue relative to some other queued node.
+     * @param sourceQueuedId ID of the source node to move
+     * @param destinationQueuedId ID of the destination node that source should be moved next to
+     * @param placeBefore Whether the source node should be placed before or after the destination node
+     * @returns True if the reorder completed, False if the either node could not be found or source node is currently playing
+     */
+    public reorderQueuedNode(sourceQueuedId: number, destinationQueuedId: number, placeBefore: boolean) : boolean {
+        let nodeToMove = this.nodeTreeMap.get(sourceQueuedId);
+        let targetNode = this.nodeTreeMap.get(destinationQueuedId);
         if (!nodeToMove || !targetNode || !nodeToMove.parentNode) return false;
+        if (nodeToMove.getPlaybackStatus() === NodePlaybackStatus.Playing) return false;
 
         //Splice nodeToMove out of the queue -- [A] -> [B] -> [C]
         this.primarySpliceNodeOut(nodeToMove);
@@ -562,6 +579,12 @@ export class Player extends MultiListenable {
         }
     }
 
+    /**
+     * Add a TempNodeProvider to the player's pool. The provider will be polled for
+     * nodes right away and then repeatedly whenever the player queue changes.
+     * 
+     * @returns The ID assigned to the provider. Used to remove it later.
+     */
     public addTempNodeProvider(provider: TempNodeProvider) : number {
         let id = this.tempNodeProviderIdCounter++;
         this.tempNodeProviders.set(id, provider);
@@ -570,7 +593,12 @@ export class Player extends MultiListenable {
         return id;
     }
 
-    //Remove a node provider and any of its queued TempNodes
+    /**
+     * Remove a TempNodeProvider from the player's pool. Any of the provider's
+     * nodes that are currently in the tree will be removed.
+     * 
+     * @param providerId The ID of the provider to remove
+     */
     public removeTempNodeProvider(providerId: number) {
         this.clearFromTempProvider(providerId);
         this.tempNodeProviders.delete(providerId);
@@ -578,7 +606,13 @@ export class Player extends MultiListenable {
     }
     // ------
 
-    //Enqueue a content block relative to one that's already in the playback tree
+    /**
+     * Enqueue a block to start playing before, after or during a block already in the tree.
+     * @param block The block to enqueue
+     * @param relativeTarget Enqueue the new block relative to this one
+     * @param startRelationship Should the new block start playing after or during the target block
+     * @param offset (Optional) Describes when the new block should start playing relative to the target. Defaults to playing sequentially, at the end of the target block
+     */
     public enqueueBlockRelative(block: ContentBlock, relativeTarget: EnqueuedContentBlock, startRelationship: PlaybackStartRelationship, offset?: PlaybackOffset) : EnqueuedContentBlock {
         let createdNode = new PlaybackContentNode(block, this.nodeIdCounter++, offset);
         let targetNode = this.nodeTreeMap.get(relativeTarget.queueId);
@@ -597,20 +631,49 @@ export class Player extends MultiListenable {
         return new EnqueuedContentBlock(createdNode);
     }
 
+    /**
+     * Register a listener that is triggered whenever a playing block reaches a certain progress.
+     * Only triggers for blocks on the primary queue.
+     * 
+     * NOTE: Prefer `addTempNodeProvider` if you want to add to the Player queue in the callback.
+     * @param progress PlaybackOffset indicating when the listener will be triggered
+     * @returns A listener ID used to cancel the listener later.
+     */
+    public onRecurringProgress(progress: PlaybackOffset, callback: (duringBlock: ContentBlockWithProgress) => void) : number {
+        throw new Error("Method not implemented");
+    }
+
+    /**
+     * Unregister a recurring progress listener.
+     * @param listenerId The ID of the listener to cancel
+     */
+    public offRecurringProgress(listenerId: number) {
+        throw new Error("Method not implemented");
+    }
+
+    /**
+     * Get the block that the player will default to if the queue runs out.
+     */
     getDefaultBlock() {
         return this.defaultBlock;
     }
 
-    //Return the active blocks based on what's currently in the renderer. Also, preserve the render hierarchy ordering
+    /**
+     * Get a list of all the ContentBlocks currently active (playing or transitioning in/out).
+     * ContentBlocks appear in the list in the same order they appear in the render hierarchy.
+     */
     getPlayingBlocks() : ContentBlockWithProgress[] {
         let activeBlocks: ContentBlockWithProgress[] = [];
         
         this.activeTracks.forEach((track, nodeId) => {
-            activeBlocks[this.renderHierarchy.getLayerIndex(track.activeRenderer)] = new ContentBlockWithProgress(track.activeBlock, Date.now() - this.nodeTreeMap.get(nodeId).getPlaybackStatusTimestamp());
+            activeBlocks[this.renderHierarchy.getLayerIndex(track.activeRenderer)] = new ContentBlockWithProgress(this.nodeTreeMap.get(nodeId), Date.now() - this.nodeTreeMap.get(nodeId).getPlaybackStatusTimestamp());
         });
         return activeBlocks;
     }
 
+    /**
+     * Pretty-print a node for logging.
+     */
     private nodeLogID(node: PlaybackContentNode) : string {
         return `${node.id}-${node.block.id}(${node.block.media.name})`;
     }
@@ -753,15 +816,15 @@ export class Player extends MultiListenable {
     private createContentBlockFromRequest(requestedBlock: any) : Promise<ContentBlock> {
         return new Promise((resolve, reject) => {
             //Try to create the MediaObject
-            this.createMediaObjectFromRequest(requestedBlock.media, this.rerunState).then((mediaObject: MediaObject) => {
-                let block = new ContentBlock(uuidv4(), mediaObject);
+            this.createMediaObjectFromRequest(requestedBlock.media, this.rerunComponents).then((mediaObject: MediaObject) => {
+                let block = new ContentBlock(mediaObject);
                 block.colour = requestedBlock.colour;
                 resolve(block);
             }).catch(error => reject(error));
         });
     }
     
-    private createMediaObjectFromRequest(requestedMedia: any, rerunState: RerunStateObject): Promise<MediaObject> {
+    private createMediaObjectFromRequest(requestedMedia: any, rerunState: PublicRerunComponents): Promise<MediaObject> {
         return new Promise((resolve, reject) => {
             let newMedia = MediaObject.CreateEmpty(requestedMedia.type);
             newMedia.name = requestedMedia.name;
@@ -819,7 +882,7 @@ export enum PlaybackStartRelationship {
 export class EnqueuedContentBlock extends ContentBlock {
     readonly queueId: number;
     constructor(node: PlaybackContentNode) {
-        super(node.block.id, node.block.media);
+        super(node.block.media, node.block.id);
         ContentBlock.clone(node.block, this);
         this.queueId = node.id;
     }
@@ -831,11 +894,10 @@ export class EnqueuedContentBlock extends ContentBlock {
     }
 }
 
-class ContentBlockWithProgress extends ContentBlock {
-    progressMs: number;
-    constructor(block: ContentBlock, playbackProgressMs: number) {
-        super(block.id, block.media);
-        ContentBlock.clone(block, this);
+class ContentBlockWithProgress extends EnqueuedContentBlock {
+    readonly progressMs: number;
+    constructor(node: PlaybackContentNode, playbackProgressMs: number) {
+        super(node);
         this.progressMs = playbackProgressMs;
     }
 

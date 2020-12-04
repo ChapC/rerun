@@ -56,7 +56,7 @@ export class LocalDirectorySource extends ContentSource {
                 this.recentVideoPaths.push(nextVideoPath);
 
                 mediaObjectFromVideoFile(nextVideoPath).then((mediaObject) => {
-                    let contentBlock = new ContentBlock(uuidv4(), mediaObject);
+                    let contentBlock = new ContentBlock(mediaObject);
                     resolve(contentBlock);
                 }).catch(error => reject(error));
 

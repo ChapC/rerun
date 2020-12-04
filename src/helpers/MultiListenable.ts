@@ -3,7 +3,12 @@ export abstract class MultiListenable {
     private listenerIdEventMap : {[id: number] : string} = {}; //Maps listenerID to the event it's listening for
     private eventListeners: {[event: string] : MultiListenable.EventCallback[]} = {}; //Maps eventName to a list of registered callbacks
 
-    //Register an event listener
+    /**
+     * Register a listener for an event on this object.
+     * @param eventName The event to listen for
+     * @param callback The callback to trigger when the event is raised
+     * @returns A ID that can be used to deactivate this listener
+     */
     on(eventName:string, callback:(ev: any) => void) : number {
         let listenerId = this.listenerIdCounter++;
         this.listenerIdEventMap[listenerId] = eventName;
@@ -16,7 +21,12 @@ export abstract class MultiListenable {
         return listenerId;
     }
 
-    //Register an event listener that will be fired only once
+    /**
+     * Register a listener for an event on this object that will only be triggered once.
+     * @param eventName The event to listen for
+     * @param callback The callback to trigger when the event is raised
+     * @returns A ID that can be used to deactivate this listener
+     */
     one(eventName:string, callback:(ev: any) => void) : number {
         //Modify the callback to unregister the event
         const modifiedCallback = (ev: any) => {
@@ -29,7 +39,10 @@ export abstract class MultiListenable {
         return listenerId;
     }
 
-    //Unregister an event listener
+    /**
+     * Unregister a listener on this object. The listener will no longer receive events.
+     * @param listenerId The ID of the listener to deactivate
+     */
     off(listenerId: number) {
         //Find the event that this listener is subscribed to
         let eventName = this.listenerIdEventMap[listenerId];

@@ -1,7 +1,7 @@
 import fs from "fs";
 import { MutableSaveableObject, SaveableObject } from "./SaveableObject";
 
-export namespace SaveableUtils {
+export namespace SaveableFileUtils {
     export enum ErrorType { FileAccessError, JSONParseError, ValuesRejectedError };
 
     /**

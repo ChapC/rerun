@@ -1,12 +1,12 @@
-import { IPAddressProperty } from "./persistance/ValidatedProperty";
+import { IPAddress } from "./persistence/ValidatedProperty";
 import { ControlPanelListener, ControlPanelRequest } from "./ControlPanelHandler";
 import { WSConnection } from "./helpers/WebsocketConnection";
-import { MutableSaveableObject, SaveableProperty } from "./persistance/SaveableObject";
+import { MutableSaveableObject, SaveableProperty } from "./persistence/SaveableObject";
 
 @ControlPanelListener
 export default class RerunUserSettings extends MutableSaveableObject {
     @SaveableProperty()
-    readonly obsAddress : IPAddressProperty = new IPAddressProperty("OBS websocket address", "localhost:4444");
+    readonly obsAddress : IPAddress = new IPAddress("OBS websocket address", "localhost:4444");
 
     @ControlPanelRequest('getUserSettings')
     private getUserSettings() {

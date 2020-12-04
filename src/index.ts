@@ -17,13 +17,20 @@ import { GraphicsLayerLocation, WebBufferLocation, LocalFileLocation } from './p
 import RerunUserSettings from "./RerunUserSettings";
 import { AlertContainer } from "./helpers/AlertContainer";
 import StartupSteps from "./StartupSteps";
-import { JSONSavable } from "./persistance/JSONSavable";
+import { JSONSavable } from "./persistence/JSONSavable";
 import { WSConnection } from "./helpers/WebsocketConnection";
 import OBS, { GraphicsModule, SpeakerLayout, EncoderConfig, VideoEncoderType, AudioEncoderType, OBSString, OBSInt, OBSClient, OBSOrder, OBSBool } from '../obs/RerunOBSBinding'; 
 import RendererPool from "./playback/renderers/RendererPool";
 import RenderHierarchy, { OBSRenderHierarchy } from "./playback/renderers/RenderHierarchy";
 import { PlaybackOffset } from "./playback/PlaybackContentNode";
-import { SaveableUtils } from "./persistance/SaveableUtils";
+import { SaveableFileUtils } from "./persistence/SaveableFileUtils";
+import Rule from "./rules/Rule";
+import DynamicFactory from "./helpers/DynamicFactory";
+import RuleCondition from "./rules/RuleCondition";
+import RuleAction from "./rules/RuleAction";
+import DuringBlockPlaybackCondition from "./rules/conditions/DuringBlockPlaybackCondition";
+import InBetweenBlocksCondition from "./rules/conditions/InBetweenBlocksCondition";
+import ShowGraphicAction from "./rules/actions/ShowGraphicAction";
 
 const express = require('express');
 const app = express();
@@ -37,12 +44,11 @@ const { JSDOM } = jsdom;
 const supportedVideoExtensions = ['.mp4', '.mkv', '.flv', '.avi', '.m4v', '.mov'];
 const saveFolder = path.join(__dirname, 'userdata');
 
-//State type definition
-export type ContentTypeRendererMap = {[contentType in MediaObject.ContentType] : {renderer: ContentRenderer, focus: Function}};
-export class RerunStateObject {
-    startup: StartupSteps;
+/**
+ * A container class holding a bunch of components making up Rerun.
+ */
+export class PublicRerunComponents {
     localIP: string;
-    server: any; //ExpressJS server
     alerts: AlertContainer;
     obs: OBSClient;
     rendererPool: RendererPool;
@@ -52,9 +58,11 @@ export class RerunStateObject {
     downloadBuffer: WebVideoDownloader;
     contentSourceManager: ContentSourceManager;
     player: Player;
+    controlPanelHandler: ControlPanelHandler = ControlPanelHandler.getInstance();
 };
-const rerunState = new RerunStateObject();
-ControlPanelHandler.setRerunState(rerunState);
+
+export type ContentTypeRendererMap = {[contentType in MediaObject.ContentType] : {renderer: ContentRenderer, focus: Function}};
+const rerunState = new PublicRerunComponents();
 
 console.info(colors.magenta.bold('-- Rerun v0.1 --'));
 
@@ -71,7 +79,7 @@ for (var device in os.networkInterfaces()) {
 }
 
 if (rerunState.localIP == null) {
-    console.warn("Failed to determine local IP address; graphics will only work locally on the server machine");
+    console.warn("Failed to determine LAN IP address; graphics will only work on the server machine");
     rerunState.localIP = "127.0.0.1";
 }
 
@@ -81,21 +89,21 @@ rerunState.alerts.addChangeListener((alerts) => ControlPanelHandler.getInstance(
 ControlPanelHandler.getInstance().registerEmptyHandler('getAlerts', () => new WSConnection.SuccessResponse('alerts', rerunState.alerts.getAlerts()));
 
 //Startup chain
-rerunState.startup = new StartupSteps(rerunState);
+let startup = new StartupSteps(rerunState);
 /*A series of promises called in sequence. If one is failed, 
 * then startup is cancelled and subsequent promises will not be called
 * until the process is restarted.
 */
 
-rerunState.startup.appendStep("Save data", (rerunState, l) => {
+startup.appendStep("Save data", (rerunState, l) => {
     //Create the userdata folder if it doesn't already exist
     return new Promise((resolve, reject) => {
         fs.mkdir(saveFolder, { recursive: true }, (error) => {
             if (!error) {
                 rerunState.userSettings = new RerunUserSettings();
                 let savePath = path.join(saveFolder, 'settings.json');
-                SaveableUtils.updateMutableFromFile(rerunState.userSettings, savePath).then(resolve).catch(reject);
-                rerunState.userSettings.onPropertiesUpdated(() => SaveableUtils.writeSaveableToFile(rerunState.userSettings, savePath));
+                SaveableFileUtils.updateMutableFromFile(rerunState.userSettings, savePath).then(resolve).catch(reject);
+                rerunState.userSettings.onPropertiesUpdated(() => SaveableFileUtils.writeSaveableToFile(rerunState.userSettings, savePath));
             } else {
                 l.error(error);
                 reject("Couldn't access user data folder");
@@ -107,7 +115,8 @@ rerunState.startup.appendStep("Save data", (rerunState, l) => {
     rerunState.userSettings = null;
 });
 
-rerunState.startup.appendStep("Web server", (rerunState, l) => {
+let expressServer: any;
+startup.appendStep("Web server", (rerunState, l) => {
     l.info('Launching control panel app...');
     app.ws('/controlWS', function(ws:WebSocket, req:ClientRequest) {
         new WebsocketHeartbeat(ws);
@@ -115,22 +124,21 @@ rerunState.startup.appendStep("Web server", (rerunState, l) => {
     });
 
     return new Promise((resolve) => {
-        rerunState.server = app.listen(8080, () => {
+        expressServer = app.listen(8080, () => {
             l.info('Started listening on port 8080');
             l.info(colors.bold.green('View the control panel at ' + colors.underline('http://' + rerunState.localIP + ':8080') + ' on your local network'));
             resolve();
         });
     });
 }, function cleanup() {
-    if (rerunState.server) {
-        rerunState.server.close();
+    if (expressServer) {
+        expressServer.close();
     }
-    rerunState.server = null;
 });
 
-rerunState.startup.appendStep("OBS", (rerunState, l) => {
-    let moduleBinPath = path.resolve(process.cwd(), 'obs/bin/x64')
-    let moduleDataPath = path.resolve(process.cwd(), 'obs/data/plugins')
+startup.appendStep("OBS", (rerunState, l) => {
+    let moduleBinPath = path.resolve(process.cwd(), 'obs/bin/x64');
+    let moduleDataPath = path.resolve(process.cwd(), 'obs/data/plugins');
     let moduleConfigDir = path.resolve(process.cwd(), 'obs/data/plugin-config');
 
     //Launch OBS
@@ -192,7 +200,7 @@ rerunState.startup.appendStep("OBS", (rerunState, l) => {
     OBS.shutdown();
 });
 
-rerunState.startup.appendStep("Graphics packages", (rerunState, l) => {
+startup.appendStep("Graphics packages", (rerunState, l) => {
     l.info('Importing packages...')
     const packagePath = './graphics';
 
@@ -213,7 +221,7 @@ rerunState.startup.appendStep("Graphics packages", (rerunState, l) => {
     rerunState.graphicsManager = null;
 });
 
-rerunState.startup.appendStep("Content renderers", (rerunState, l) => {
+startup.appendStep("Content renderers", (rerunState, l) => {
     l.info('Preparing content renderers...');
 
     rerunState.renderHierarchy = new OBSRenderHierarchy(rerunState.obs.getMainScene());
@@ -276,7 +284,7 @@ rerunState.startup.appendStep("Content renderers", (rerunState, l) => {
     //rerunState.renderers = null; TODO Add a destroy method to each factory (NOT the ContentRenderer - I still want to try to keep that separate from OBS)
 });
 
-rerunState.startup.appendStep("Download buffer", (rerunState, l) => {
+startup.appendStep("Download buffer", (rerunState, l) => {
     l.info('Creating download buffer...');
 
     return new Promise((resolve, reject) => {
@@ -300,13 +308,13 @@ rerunState.startup.appendStep("Download buffer", (rerunState, l) => {
     rerunState.downloadBuffer = null;
 });
 
-rerunState.startup.appendStep("Player", (rerunState, l) => {
+startup.appendStep("Player", (rerunState, l) => {
     l.info('Configuring player instance...');
 
     //Use the title screen graphic as the default block (when nothing else is available)
     const titleScreenGraphicName = 'Title slate';
     const titleScreenGraphicLocation = new GraphicsLayerLocation(new GraphicLayerReference('Clean', 'Title slate'));
-    const titleBlock = new ContentBlock('titleBlock', new MediaObject(MediaObject.MediaType.RerunGraphic, titleScreenGraphicName, titleScreenGraphicLocation, Number.POSITIVE_INFINITY));
+    const titleBlock = new ContentBlock(new MediaObject(MediaObject.MediaType.RerunGraphic, titleScreenGraphicName, titleScreenGraphicLocation, Number.POSITIVE_INFINITY));
     titleBlock.transitionInMs = 1000;
     titleBlock.transitionOutMs = 800;
     
@@ -327,7 +335,7 @@ rerunState.startup.appendStep("Player", (rerunState, l) => {
 });
 
 //The top {itemsToPreload} items in the queue should be downloaded into the buffer
-rerunState.startup.appendStep("Download buffer hook", (rerunState, l) => {
+startup.appendStep("Download buffer hook", (rerunState, l) => {
     const itemsToPreload = 3;
     
     rerunState.player.on('queueChange', (newQueue : ContentBlock[]) => {
@@ -342,7 +350,7 @@ rerunState.startup.appendStep("Download buffer hook", (rerunState, l) => {
     return Promise.resolve();
 }, function cleanup() {});
 
-rerunState.startup.appendStep("Graphics layer socket", (rerunState, l) => {
+startup.appendStep("Graphics layer socket", (rerunState, l) => {
     return new Promise((resolve, reject) => {
         l.info('Opening websocket...');
 
@@ -369,37 +377,8 @@ rerunState.startup.appendStep("Graphics layer socket", (rerunState, l) => {
 
     });
 }, function cleanup() {});
-
-// rerunState.startup.appendStep("User events", (rerunState, l) => {
-//     return new Promise((resolve, reject) => {
-//         l.info('Fetching events...');
-//         try {
-//             rerunState.userEventManager = new UserEventManager(path.join(saveFolder, 'events.json'), rerunState);
-        
-//             //Built-in event logic types
-//             rerunState.userEventManager.eventLogicTypes.registerSubtype("During a block", (r) => new InBlockLogic(r.player));
-//             //rerunState.userEventManager.eventLogicTypes.registerSubtype("In-between blocks", (r) => new BetweenBlockLogic(r.player));
-//             //Built-in event action types
-//             rerunState.userEventManager.eventActionTypes.registerSubtype("Show a graphic", (r) => new ShowGraphicAction(r.graphicsManager));
-
-//             //TODO: Plugins should be able to define their own event logic and action types
-
-//             //Listeners
-//             rerunState.userEventManager.addChangeListener((events) => ControlPanelHandler.getInstance().sendAlert('setEventList', events));
-//             rerunState.userEventManager.addChangeListener((events) => JSONSavable.serializeJSON(rerunState.userEventManager.toJSON(), rerunState.userEventManager.savePath))
-            
-//             //Try load from saved events
-//             JSONSavable.updateSavable(rerunState.userEventManager).then(resolve).catch(reject);
-//         } catch (error) {
-//             reject(error);
-//         }
-//     });
-// }, function cleanup() {
-//     rerunState.userEventManager = null;
-//     rerunState.userEventManager.cancelAllListeners();
-// });
  
-rerunState.startup.appendStep("Content sources", (rerunState, l) => {
+startup.appendStep("Content sources", (rerunState, l) => {
     l.info('Loading content sources...');
 
     return new Promise((resolve, reject) => {
@@ -426,37 +405,27 @@ rerunState.startup.appendStep("Content sources", (rerunState, l) => {
     rerunState.contentSourceManager = null;
 });
 
-rerunState.startup.appendStep('Rules', (rerunState, l) => {
+startup.appendStep('Rules', (rerunState, l) => {
+    //The conditions and actions added to these factories will be available to the user when creating rules
+    let ruleConditions = new DynamicFactory<RuleCondition>(rerunState);
+    ruleConditions.registerConstructor('During a block', (r: PublicRerunComponents) => new DuringBlockPlaybackCondition(r.player));
+    //ruleConditions.registerConstructor('Inbetween blocks', (r: PublicRerunComponents) => new InBetweenBlocksCondition())
 
-    const titleScreenGraphicName = 'Title slate';
-    const titleScreenGraphicLocation = new GraphicsLayerLocation(new GraphicLayerReference('Clean', 'Title slate'));
-    const titleBlock = new ContentBlock('stingerBlockTitle', new MediaObject(MediaObject.MediaType.RerunGraphic, titleScreenGraphicName, titleScreenGraphicLocation, 5000));
-    titleBlock.transitionInMs = 1000;
-    titleBlock.transitionOutMs = 800;
+    let ruleActions = new DynamicFactory<RuleAction>(rerunState);
+    ruleActions.registerConstructor('Show a graphic', (r: PublicRerunComponents) => new ShowGraphicAction(r.graphicsManager, r.player));
 
-    let everySecondProvider = (queue: EnqueuedContentBlock[]) => {
-        let blocks = [];
-        for (let i = 0; i < queue.length; i++) {
-            if (i % 2 === 0) {
-                blocks.push({
-                    block: titleBlock,
-                    relativeTarget: queue[i],
-                    startRelationship: PlaybackStartRelationship.Sequenced,
-                    offset: new PlaybackOffset(PlaybackOffset.Type.MsBeforeEnd, titleBlock.transitionInMs)
-                });
-            }
-        }
-        return blocks;
-    }
-
-    rerunState.player.addTempNodeProvider(everySecondProvider);
+    let slateAfterEach = new Rule(ruleConditions, ruleActions);
+    slateAfterEach.condition.trySetValue({
+        alias: 'During a block',
+        obj: { neeee: 'nooo' }
+    });
 
     return Promise.resolve();
 }, function cleanup() {
 
 });
 
-rerunState.startup.start();
+startup.start();
 
 function injectIPIntoHTML(pathToHTML:PathLike, ipAddress:string) : string {
     let rawHTML = fs.readFileSync(pathToHTML);

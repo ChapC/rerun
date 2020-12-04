@@ -1,4 +1,3 @@
-import { RerunStateObject } from './index';
 import { WSConnection } from './helpers/WebsocketConnection';
 import WebSocket from 'ws';
 
@@ -10,11 +9,6 @@ export default class ControlPanelHandler {
     private constructor() { }
 
     private static instance: ControlPanelHandler = new ControlPanelHandler();
-    
-    private rerunState: RerunStateObject;
-    static setRerunState(state: RerunStateObject) {
-        this.instance.rerunState = state;
-    }
 
     static getInstance() : ControlPanelHandler {
         return this.instance;

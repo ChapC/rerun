@@ -1,20 +1,21 @@
 import PrefixedLogger from "./helpers/PrefixedLogger";
-import { RerunStateObject } from ".";
+import { PublicRerunComponents } from ".";
 import process from 'process';
 
 const keypress = require('keypress');
 const colors = require('colors');
 
-type stepFunction = ((rerunState: RerunStateObject, logger: PrefixedLogger) => Promise<void>);
+type StepFunctionPromise = ((rerunState: PublicRerunComponents, logger: PrefixedLogger) => Promise<void>);
+type StepFunctionVoid = ((rerunState: PublicRerunComponents, logger: PrefixedLogger) => void);
 export default class StartupSteps {
     private steps : StoredStep[] = [];
     private logger = new PrefixedLogger("Startup");
 
-    constructor(private rerunState: RerunStateObject) {
+    constructor(private rerunState: PublicRerunComponents) {
         keypress(process.stdin);
     }
 
-    appendStep(stepKey: string, step: stepFunction, cleanUp: () => void) {
+    appendStep(stepKey: string, step: StepFunctionPromise, cleanUp: () => void) {
         this.steps.push(new StoredStep(stepKey, step, cleanUp));
     }
 
@@ -30,11 +31,11 @@ export default class StartupSteps {
         return targetIndex;
     }
 
-    insertStepBefore(beforeKey: string, stepKey: string, step: stepFunction, cleanUp: () => void) {
+    insertStepBefore(beforeKey: string, stepKey: string, step: StepFunctionPromise, cleanUp: () => void) {
         this.steps.splice(this.getIndexOrDefault(beforeKey, this.steps.length), 0, new StoredStep(stepKey, step, cleanUp));
     }
 
-    insertStepAfter(afterKey: string, stepKey: string, step: stepFunction, cleanUp: () => void) {
+    insertStepAfter(afterKey: string, stepKey: string, step: StepFunctionPromise, cleanUp: () => void) {
         let targetIndex = this.getIndexOrDefault(afterKey, -1);
         if (targetIndex === -1) {
             throw new Error("Couldn't insert step before '" + afterKey + "'. No step with that key is registered.");
@@ -71,7 +72,7 @@ export default class StartupSteps {
             if (!this.startupFailed) {
                 console.info(colors.green('Rerun ready!'));
             } else {
-                console.info("An error prevented Rerun from starting properly. Press enter to try again or Ctrl+C to exit...");
+                console.info("An error prevented Rerun from starting properly. Press enter to try again or Ctrl+C to exit.");
                 process.stdin.on('keypress', this.restartOrCancel);          
             }
         });
@@ -103,5 +104,5 @@ export default class StartupSteps {
 }
 
 class StoredStep {
-    constructor(public key: string, public run: stepFunction, public cleanUp: () => void) {}
+    constructor(public key: string, public run: StepFunctionPromise, public cleanUp: () => void) {}
 }

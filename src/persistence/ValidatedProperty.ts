@@ -3,18 +3,20 @@ import DynamicFactory from "../helpers/DynamicFactory";
 import { Tree } from "../helpers/Tree";
 import ControlPanelHandler from "../ControlPanelHandler";
 import { WSConnection } from "../helpers/WebsocketConnection";
-import { SaveableObject } from "./SaveableObject";
+import { ImmutableSaveableObject, ImmutableSaveableObjectWithConstructor, MutableSaveableObject, SaveableObject } from "./SaveableObject";
 const uuidv4 = require('uuid/v4');
+
+// TODO: Replace acceptAny null returns with error messages explaining why validation failed
 
 /**
  * Base class for a getter/setter with built-in value and type validation. 
  * Call trySetValue() with an `any` to attempt to set the property's value and getValue() to access it.
- * Changes are observable via the SingleListenable extension.
+ * Changes are observable via SingleListenable methods.
  * 
  * @remarks Used when creating forms for the client-side (where a control is defined for each type of property) and for type-aware serialization.
  */
 export abstract class ValidatedProperty<T> extends SingleListenable<T> {
-    protected type: string;
+    protected abstract readonly type: string;
     private value: T;
 
     constructor(public readonly name: string, defaultValue?: T) {
@@ -67,9 +69,16 @@ export abstract class ValidatedProperty<T> extends SingleListenable<T> {
 
     /**
      * Implemented by child classes. 
-     * Return the value to store in the ValidatedProperty (usually unmodified, but you do you) or null to reject the value.
+     * Return the value to have it stored in the ValidatedProperty (usually unmodified, but you do you) or null to reject the value.
      */
     protected abstract acceptAny(value: any) : T 
+
+    /**
+     * Reset this property's value to null.
+     */
+    protected clearValue() {
+        this.value = null;
+    }
 
     toJSON() : any {
         return { name: this.name, type: this.type, value: this.value };
@@ -81,8 +90,12 @@ export abstract class ValidatedProperty<T> extends SingleListenable<T> {
 }
 
 //Property types
+
+/**
+ * Property accepting a string.
+ */
 export class StringProperty extends ValidatedProperty<string> {
-    type = 'string';
+    readonly type: string = 'string';
     static type = 'string';
 
     protected acceptAny(value: any) : string {
@@ -98,7 +111,7 @@ export class StringProperty extends ValidatedProperty<string> {
  * Property accepting integers only.
  */
 export class IntegerProperty extends ValidatedProperty<number> {
-    type = 'int';
+    readonly type: string = 'int';
 
     protected acceptAny(value: any) : number {
         if ((typeof value) === 'number' && Number.isInteger(value)) {
@@ -113,7 +126,7 @@ export class IntegerProperty extends ValidatedProperty<number> {
  * Property accepting any kind of number.
  */
 export class NumberProperty extends ValidatedProperty<number> {
-    type = 'number';
+    readonly type: string = 'number';
 
     protected acceptAny(value: any) : number {
         if ((typeof value) === 'number') {
@@ -124,9 +137,9 @@ export class NumberProperty extends ValidatedProperty<number> {
     }   
 }
 
-export class URLProperty extends ValidatedProperty<string> {
+export class URLProperty extends StringProperty {
     private urlRegex = new RegExp(/[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/);
-    type = 'url';
+    readonly type = 'url';
 
     protected acceptAny(value: any) : string {
         if (this.urlRegex.test(value)) {
@@ -137,24 +150,41 @@ export class URLProperty extends ValidatedProperty<string> {
     }    
 }
 
-//A string from a list of valid options
-export class StringSelectProperty extends StringProperty {
+/**
+ * A property accepting a string if it is contained in a list of valid options. Like a dropdown menu.
+ * 
+ * You can use setOptions to set the list of valid strings or construct the property
+ * with a string enum to allow any value in the enum.
+ */
+export class StringSelect extends StringProperty {
     static type = 'select-string'
-    type = StringSelectProperty.type;
+    readonly type = StringSelect.type;
 
     private options : string[] = [];
     
     constructor(name: string, usingEnum?: {[enumKey: string] : string}, defaultValue?: string) {
         super(name, defaultValue);
         if (usingEnum) {
-            //Check that every value of the enum object is a string
+            //Check that every value of the enum object is a string and that the enum contains the default value
+            let enumHasDefault = false;
             Object.values(usingEnum).forEach((value) => {
                 if ((typeof value) === 'string') {
                     this.options.push(value as string);
                 } else {
                     throw new Error("usingEnum must only contain string values.");
                 }
+
+                if (value == defaultValue) {
+                    enumHasDefault = true;
+                }
             });
+
+            if (defaultValue != null && !enumHasDefault) {
+                throw new Error("The provided default string value is not included in the enum");
+            }
+        } else if (defaultValue != null) {
+            //We know that options must at least contain the default value
+            this.options.push(defaultValue);
         }
     }
 
@@ -171,10 +201,29 @@ export class StringSelectProperty extends StringProperty {
         }
     }
 
-    setOptions(options: string[]) {
+    /**
+     * Set the string options the user can choose from.
+     * 
+     * NOTE: If the property already has an option selected and the new set doesn't contain this value,
+     * this method will throw an error unless clearCurrentValue is set to true.
+     * @param options The list of strings that will be allowed values
+     * @param clearCurrentValue Should the property's current value be cleared first? (default false)
+     */
+    setOptions(options: string[], clearCurrentValue = false) {
+        if (clearCurrentValue) {
+            this.clearValue();
+        } else {
+            if (!options.includes(this.getValue())) {
+                throw new Error("The new options set does not contain the current value");
+            }
+        }
+
         this.options = options;
     }
 
+    /**
+     * Get the list of valid options this property will accept.
+     */
     getOptions() : string[] {
         return this.options;
     }
@@ -187,57 +236,90 @@ export class StringSelectProperty extends StringProperty {
     }
 }
 
+export type SerializedObjWithAlias = { alias: string, obj: any };
 /**
- * Stores a SaveableObject and allows setting of the whole object at once.
+ * A property accepting any SaveableObject of a certain type using constructors from a DynamicFactory.
  * 
- * @remarks Allows SaveableObject to be nested within another. See DynamicFactory for details.
+ * Users call trySetValue with an object of the following type:
+ * 
+ * {
+ *  alias: string,
+ *  obj: any
+ * }
+ * 
+ * where `alias` is a type alias registered with the DynamicFactory
+ * and `obj` is the data to be deserialized into the object the factory outputs.
+ * 
+ * Values are rejected if `alias` is unknown to the DynamicFactory or if deserialization of `obj` fails.
  */
-export class NestedSaveableSelectProperty<T extends SaveableObject> extends ValidatedProperty<T> {
-    type = 'select-nestedsaveable';
-    readonly id: string;
-    constructor(name: string, readonly typeAlias: StringProperty, private subGroupFactory: DynamicFactory<T>) {
+export class SaveableFromFactorySelect<T extends SaveableObject> extends ValidatedProperty<T> {
+    readonly type = 'select-saveablefromfactory';
+
+    constructor(name: string, private factory: DynamicFactory<T>) {
         super(name);
-        this.id = uuidv4();
-        ControlPanelHandler.getInstance().registerHandler(`property/subgroup/${this.id}/outline:get`, isString, (a) => this.getOutlineForAlias(a));
     }
 
-    acceptAny(value: any) : T {
-        let targetType = this.subGroupFactory.constructInstanceOf(this.typeAlias.getValue());
-        if (targetType != null) {
-            if (targetType.deserialize(value)) {
-                return targetType;
+    /* This overload required because the TS compiler isn't smart enough to narrow generic types like it does with variables. 
+    * Without the overload the compiler will complain that T isn't of the right type when we try to return the deserialized instance. 
+    * We know that it actually *is* the right type because we run type guards against the instance returned by the factory (which is a T, so transitive property).
+    */
+    protected acceptAny(value: any) : T
+    protected acceptAny(value: any) : any {
+        if ((typeof value.alias) === "string" && value.obj != null) {
+            
+            if (!this.factory.isKnownAlias(value.alias)) return null;
+            //Create an object using this alias' constructor
+            let fromFactory: T = this.factory.constructInstanceOf(value.alias);
+
+            //Fill newObject with the serialized data provided by the user (method varies depending on type of SaveableObject)
+            if (ImmutableSaveableObject.isInstance(fromFactory)) {
+                try {
+                    return fromFactory.deserializeToNew<ImmutableSaveableObject>(value.obj);
+                } catch {
+                    return null;
+                }
+            } else if (ImmutableSaveableObjectWithConstructor.isInstance(fromFactory)) {
+                try { //please forgive my type-safety transgressions, oh lord TS Compiler, I give my word that it will be okay
+                    return fromFactory.deserializeToNew<ImmutableSaveableObjectWithConstructor>(() => <any> this.factory.constructInstanceOf(value.alias), value.obj);
+                } catch {
+                    return null;
+                }
+            } else if (MutableSaveableObject.isInstance(fromFactory)) {
+                if (fromFactory.deserializeFrom(value.obj) === false) return null;
+                return fromFactory;
             } else {
-                return null;
+                return null; //Unknown SaveableObject type
             }
+
         } else {
-            return null;
+            return null; //value wasn't a SerializedObjWithAlias
         }
     }
 
-    //Control panels use this method to fetch the outline for a SubGroup when a different typeAlias is selected by the user.
-    //eg. Fetching the event logic outline when the user changes the logicType property of a UserEvent.
-    getOutlineForAlias(alias: string): WSConnection.WSPendingResponse {
-        let targetType = this.subGroupFactory.constructInstanceOf(alias);
-        if (targetType != null) {
-            return new WSConnection.SuccessResponse('Outline', targetType.getOutline());
-        } else {
-            return new WSConnection.ErrorResponse('InvalidAlias', `There is no type matching alias '${alias}'`);
+    /**
+     * Returns the alias for and a default instance of every constructor registered with the factory.
+     */
+    getDefaultOptions() : SerializedObjWithAlias[] {
+        let defaults: SerializedObjWithAlias[] = [];
+        for (let alias of this.factory.allKnownAliases()) {
+            let defaultInstance = this.factory.constructInstanceOf(alias);
+            defaults.push({
+                alias: alias,
+                obj: defaultInstance
+            });
         }
+        return defaults;
     }
 
     toJSON() {
         return {
-            ...super.toJSON(), id: this.id
+            ...super.toJSON(), options: this.getDefaultOptions()
         }
-    }
-
-    static isInstance(obj: any) : obj is NestedSaveableSelectProperty<any> {
-        return (obj.acceptAny && obj.type === 'subgroup');
     }
 }
 
-export class IPAddressProperty extends ValidatedProperty<string> {
-    type = 'ip';
+export class IPAddress extends StringProperty {
+    readonly type = 'ip';
 
     protected acceptAny(value: any) : string {
         if ((typeof value) === 'string' && this.isIP(value)) {
@@ -270,14 +352,17 @@ export class IPAddressProperty extends ValidatedProperty<string> {
 }
 
 /**
- * Accepts a "/" separated path string that points to a node within a tree.
+ * Accepts a "/" separated path string that points to a node within a Tree.
+ * 
+ * The property will check whether a value is a valid path within the tree when trySetValue is called, 
+ * but keep in mind if the tree is modified after this time the path may become invalid.
  */
-export class TreePathProperty extends ValidatedProperty<string> {
-    type = 'treepath';
+export class TreePath extends StringProperty {
+    readonly type = 'treepath';
     readonly id : string;
 
     constructor(name: string, readonly tree: Tree<any, any>) {
-        super(name, '');
+        super(name, null);
         this.id = uuidv4();
         ControlPanelHandler.getInstance().registerHandler(`property/treepath/${this.id}/node:get`, isString, (n: string) => this.getTreeNodeRequest(n));
     }
@@ -295,9 +380,13 @@ export class TreePathProperty extends ValidatedProperty<string> {
         }
     }
 
+    getValueAsPathArray() : string[] {
+        return this.getValue().split('/').filter((str: string) => str != "");
+    }
+
     protected acceptAny(value: any) : string {
         if ((typeof value === 'string')) {
-            let pathArray = value.split('/').filter((str: string) => str != "");
+            let pathArray = this.getValueAsPathArray();
             //Verify that the provided path leads to a valid node
             if (this.tree.getNodeAtPath(pathArray) != null) {
                 return value;
