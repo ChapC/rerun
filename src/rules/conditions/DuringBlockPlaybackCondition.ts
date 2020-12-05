@@ -1,3 +1,4 @@
+import { SaveableProperty } from "../../persistence/SaveableObject";
 import { IntegerProperty, NumberProperty, StringSelect } from "../../persistence/ValidatedProperty";
 import { PlaybackOffset } from "../../playback/PlaybackContentNode";
 import { EnqueuedContentBlock, PlaybackStartRelationship, Player, TempNodeProvider } from "../../playback/Player";
@@ -9,9 +10,12 @@ import RuleCondition from "../RuleCondition";
 /**
  * Trigger the event during a certain point in every nth block.
  */
-export default class DuringBlockPlaybackCondition extends RuleCondition {    
+export default class DuringBlockPlaybackCondition extends RuleCondition {
+    @SaveableProperty()
     readonly frequency = new IntegerProperty('Frequency', 1);
+    @SaveableProperty()
     readonly playbackOffsetType = new StringSelect('Playback offset type', PlaybackOffset.Type, PlaybackOffset.Type.MsAfterStart);
+    @SaveableProperty()
     readonly playbackOffsetSeconds = new NumberProperty('Start offset (secs)', 5);
 
     constructor(private player: Player) { super(); };

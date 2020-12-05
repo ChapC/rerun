@@ -42,10 +42,11 @@ export abstract class SaveableObject {
 }
 
 class KeyValidatedPropertyPair { constructor(public key: string, public prop: ValidatedProperty<any>) { }; }
-//@SaveableProperty decorator function
+
+//@SaveableProperty property decorator
 const taggedPropertyMetaKey = Symbol('savablePropertyTagged');
 /**
- * Marks a property on a SaveableObject for inclusion in the serialization/deserialization process.
+ * Mark a property for inclusion in the SaveableObject serialization/deserialization process.
  * 
  * NOTE: The target property must be a ValidatedProperty.
  */
@@ -67,6 +68,24 @@ export function SaveableProperty() : (target: any, propertyKey: string) => void 
     };
 }
 
+//@AfterDeserialize method decorator
+const afterDeserializeMethodKey = Symbol('afterDeserializeMethod');
+/**
+ * Mark a method to be called after this SaveableObject's properties have been read in from a serialized object.
+ * 
+ * NOTE: This decorator is only applicable to ImmutableSaveable/ImmutableSaveableWithConstructor objects.
+ */
+export function AfterDeserialize() : (target: any, propertyKey: string, descriptor: PropertyDescriptor) => void {
+    return (target, propertyKey, descriptor) => { //target will be the class prototype, propertyKey is the name of the method
+        if (typeof(target) === 'function') throw new Error('AfterDeserialize cannot be used in a static context');
+
+        //We'll store the name of the decorated function on the prototype so ImmutableSaveableObject can find it later
+        if (target[afterDeserializeMethodKey]) throw new Error('Only one AfterDeserialize method allowed per class');
+
+        target[afterDeserializeMethodKey] = propertyKey;
+    }
+}
+
 /** NOTE:
  * The only difference between the ISO and ISOWithConstructor classes 
  * is that ISO automatically grabs this.constructor and calls it
@@ -83,8 +102,9 @@ export function SaveableProperty() : (target: any, propertyKey: string) => void 
 export abstract class ImmutableSaveableObject extends SaveableObject {
     private readonly iHasConstructor = false;
     public deserializeToNew<T extends ImmutableSaveableObject>(serializedObject: any) : T {
-        let taggedPropertyKeys: string[] = Reflect.getMetadata(taggedPropertyMetaKey, this);
-        
+        let taggedPropertyKeys: string[] = Reflect.getMetadata(taggedPropertyMetaKey, this) || [];
+        if (taggedPropertyKeys.length === 0) console.warn('Deserializing an ImmutableSaveableObject that has no @SaveableProperty decorators. This is probably a mistake.');
+
         let newObj: T = new (<any>this.constructor)(); //Create a new instance of the child class
 
         /*
@@ -97,20 +117,28 @@ export abstract class ImmutableSaveableObject extends SaveableObject {
             let propertyKeyToDeserialize = taggedPropertyKeys[i];
             //Find the property on newObj
             let targetProperty = newObj[propertyKeyToDeserialize];
-            if (!ValidatedProperty.isInstance(targetProperty)) throw new Error(`Failed to deserialize: Property ${propertyKeyToDeserialize} is tagged with @SaveableProperty, but it is not a ValidatedProperty`);
+            if (!ValidatedProperty.isInstance(targetProperty)) throw new Error(`Failed to deserialize: Property '${propertyKeyToDeserialize}' is tagged with @SaveableProperty, but it is not a ValidatedProperty`);
 
             //Find the property on the serializedObject
             let serializedProperty = serializedObject[propertyKeyToDeserialize];
-            if (!serializedProperty) throw new Error(`Failed to deserialize: Couldn't find property ${propertyKeyToDeserialize} on serialized object`);
+            if (!serializedProperty) throw new Error(`Failed to deserialize: Missing property '${propertyKeyToDeserialize}' on serialized object`);
 
             //Pass the serializedProperty to the targetProperty and see if it's accepted
-            if (!targetProperty.trySetValue(serializedProperty, false)) throw new Error(`Failed to deserialize: Value for property ${propertyKeyToDeserialize} was rejected`);
+            let rejected = targetProperty.trySetValue(serializedProperty, false);
+            if (rejected) throw new Error(`Failed to deserialize '${propertyKeyToDeserialize}' - ${rejected}`);
 
+            targetProperty.makeImmutable();
             taggedPropertyKeys.splice(i, 1);
         }
 
         if (taggedPropertyKeys.length > 0) {
             throw new Error(`Failed to deserialize: The following propert${ taggedPropertyKeys.length === 0 ? 'y was' : 'ies were' } not present on the serialized object ${taggedPropertyKeys}`);
+        }
+
+        //Check if this class has an AfterDeserialize method decorated
+        let afterDeserializeMethod = newObj.prototype[afterDeserializeMethodKey];
+        if (afterDeserializeMethodKey) {
+            afterDeserializeMethod();
         }
 
         return newObj;
@@ -131,7 +159,8 @@ export abstract class ImmutableSaveableObject extends SaveableObject {
 export abstract class ImmutableSaveableObjectWithConstructor extends SaveableObject {
     private readonly iHasConstructor = true;
     public deserializeToNew<T extends ImmutableSaveableObjectWithConstructor>(constructor: () => T, serializedObject: any) : T {
-        let taggedPropertyKeys: string[] = Reflect.getMetadata(taggedPropertyMetaKey, this);
+        let taggedPropertyKeys: string[] = Reflect.getMetadata(taggedPropertyMetaKey, this) || [];
+        if (taggedPropertyKeys.length === 0) console.warn('Deserializing an ImmutableSaveableObjectWithConstructor that has no @SaveableProperty decorators. This is probably a mistake.');
         
         let newObj: T = constructor(); //Create a new instance of the child class using the provided constructor
 
@@ -141,21 +170,28 @@ export abstract class ImmutableSaveableObjectWithConstructor extends SaveableObj
             let propertyKeyToDeserialize = taggedPropertyKeys[i];
             //Find the property on newObj
             let targetProperty = newObj[propertyKeyToDeserialize];
-            if (!targetProperty) throw new Error(`Failed to deserialize: Couldn't find property ${propertyKeyToDeserialize} on the instance returned by the constructor function`);
-            if (!ValidatedProperty.isInstance(targetProperty)) throw new Error(`Failed to deserialize: Property ${propertyKeyToDeserialize} is tagged with @SaveableProperty, but it is not a ValidatedProperty`);
+            if (!targetProperty) throw new Error(`Failed to deserialize: Missing property '${propertyKeyToDeserialize}' on the instance returned by the constructor function`);
+            if (!ValidatedProperty.isInstance(targetProperty)) throw new Error(`Failed to deserialize: Property '${propertyKeyToDeserialize}' is tagged with @SaveableProperty, but it is not a ValidatedProperty`);
 
             //Find the property on the serializedObject
             let serializedProperty = serializedObject[propertyKeyToDeserialize];
-            if (!serializedProperty) throw new Error(`Failed to deserialize: Couldn't find property ${propertyKeyToDeserialize} on serialized object`);
+            if (!serializedProperty) throw new Error(`Failed to deserialize: Missing property '${propertyKeyToDeserialize}' on serialized object`);
 
             //Pass the serializedProperty to the targetProperty and see if it's accepted
-            if (!targetProperty.trySetValue(serializedProperty, false)) throw new Error(`Failed to deserialize: Value for property ${propertyKeyToDeserialize} was rejected`);
+            let rejected = targetProperty.trySetValue(serializedProperty, false);
+            if (rejected) throw new Error(`Failed to deserialize '${propertyKeyToDeserialize}' - ${rejected}`);
 
+            targetProperty.makeImmutable();
             taggedPropertyKeys.splice(i, 1);
         }
 
         if (taggedPropertyKeys.length > 0) {
             throw new Error(`Failed to deserialize: The following propert${ taggedPropertyKeys.length === 0 ? 'y was' : 'ies were' } not present on the serialized object ${taggedPropertyKeys}`);
+        }
+
+        let afterDeserializeMethod = newObj.prototype[afterDeserializeMethodKey];
+        if (afterDeserializeMethodKey) {
+            afterDeserializeMethod();
         }
 
         return newObj;

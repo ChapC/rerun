@@ -1,5 +1,5 @@
 import { GraphicLayer, GraphicManager } from "../../graphiclayers/GraphicManager";
-import { SaveableProperty } from "../../persistence/SaveableObject";
+import { AfterDeserialize, SaveableProperty } from "../../persistence/SaveableObject";
 import { NumberProperty, TreePath } from "../../persistence/ValidatedProperty";
 import { ContentBlock } from "../../playback/ContentBlock";
 import { GraphicsLayerLocation } from "../../playback/MediaLocations";
@@ -16,15 +16,17 @@ export default class ShowGraphicAction extends RuleAction {
     @SaveableProperty()
     readonly onScreenDurationSeconds = new NumberProperty('Duration (secs)', 5);
 
-    private graphicContentBlock: ContentBlock;
+    private graphicContentBlock: ContentBlock = null;
 
-    constructor (private graphicManager: GraphicManager, private player: Player) { 
-        super();        
+    constructor (private graphicManager: GraphicManager, private player: Player) { super(); };
+
+    @AfterDeserialize()
+    private init() {
         //Create a ContentBlock with the target layer and time
-        let targetLayer = graphicManager.graphicsTree.getNodeAtPath(this.targetLayerPath.getValueAsPathArray()).value as GraphicLayer;
+        let targetLayer = this.graphicManager.graphicsTree.getNodeAtPath(this.targetLayerPath.getValueAsPathArray()).value as GraphicLayer;
         let mediaObj = new MediaObject(MediaObject.MediaType.RerunGraphic, targetLayer.name, new GraphicsLayerLocation(targetLayer.asReference), this.onScreenDurationSeconds.getValue() * 1000);
         this.graphicContentBlock = new ContentBlock(mediaObj);
-    };
+    }
 
     run(): void {
         //Start playing the graphic block now. We do this by enqueuing it relative to current block

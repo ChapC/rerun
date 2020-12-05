@@ -6,8 +6,6 @@ import { WSConnection } from "../helpers/WebsocketConnection";
 import { ImmutableSaveableObject, ImmutableSaveableObjectWithConstructor, MutableSaveableObject, SaveableObject } from "./SaveableObject";
 const uuidv4 = require('uuid/v4');
 
-// TODO: Replace acceptAny null returns with error messages explaining why validation failed
-
 /**
  * Base class for a getter/setter with built-in value and type validation. 
  * Call trySetValue() with an `any` to attempt to set the property's value and getValue() to access it.
@@ -18,6 +16,7 @@ const uuidv4 = require('uuid/v4');
 export abstract class ValidatedProperty<T> extends SingleListenable<T> {
     protected abstract readonly type: string;
     private value: T;
+    private propertyLocked = false;
 
     constructor(public readonly name: string, defaultValue?: T) {
         super();
@@ -32,26 +31,40 @@ export abstract class ValidatedProperty<T> extends SingleListenable<T> {
         return this.value;
     }
 
-    hasValue() : boolean {
-        return this.value != null;
-    }
+    /**
+     * Attempt to set the value of the property.
+     * @param triggerChangeEvent Should this change trigger any listeners on this property.
+     * @returns Null if the value was accepted or an error string describing why it was rejected.
+     */
+    trySetValue(value: any, triggerChangeEvent = true) : null | string {
+        if (this.propertyLocked) {
+            return 'Property is immutable';
+        };
 
-    trySetValue(value: any, triggerChangeEvent = true) : boolean {
         let v = value;
-        if (value.name && value.value && value.type) {
+        if (value.name && value.value && value.type) { //TODO: Is this needed anymore?
             //This is a serialized FormProperty. Use the value from inside it
             v = value.value
         }
 
-        const acceptedValue = this.acceptAny(v);
-        if (acceptedValue != null) {
+        try {
+            const acceptedValue = this.acceptAny(v);
             this.value = acceptedValue;
             if (triggerChangeEvent) {
                 this.triggerListeners(acceptedValue);
             }
-            return true;
+            return null;
+        } catch (ex) {
+            if (ex instanceof Error) {
+                if (ex.message) {
+                    return 'Value rejected - ' + ex.message;
+                } else {
+                    return 'Value rejected';
+                }
+            } else {
+                return 'Unknown error - ' + JSON.stringify(ex);
+            }
         }
-        return false;
     }
 
     /**
@@ -64,12 +77,25 @@ export abstract class ValidatedProperty<T> extends SingleListenable<T> {
             v = value.value
         }
 
-        return this.acceptAny(v) != null;
+        try {
+            this.acceptAny(v);
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     /**
-     * Implemented by child classes. 
-     * Return the value to have it stored in the ValidatedProperty (usually unmodified, but you do you) or null to reject the value.
+     * Lock the property. No future calls to trySetValue will be accepted.
+     */
+    makeImmutable() : void {
+        this.propertyLocked = true;
+    }
+
+    /**
+     * Implemented by child classes.
+     * 
+     * Return the value to have it stored in the ValidatedProperty (you can modify it if you like!) or throw an Error() to reject the value.
      */
     protected abstract acceptAny(value: any) : T 
 
@@ -102,7 +128,7 @@ export class StringProperty extends ValidatedProperty<string> {
         if ((typeof value) === 'string') {
             return value;
         } else {
-            return null;
+            throw new Error('value was not a string');
         }
     }
 }
@@ -117,7 +143,7 @@ export class IntegerProperty extends ValidatedProperty<number> {
         if ((typeof value) === 'number' && Number.isInteger(value)) {
             return value;
         } else {
-            return null;
+            throw new Error('value was not a number');
         }
     }    
 }
@@ -132,7 +158,7 @@ export class NumberProperty extends ValidatedProperty<number> {
         if ((typeof value) === 'number') {
             return value;
         } else {
-            return null;
+            throw new Error('value was not a number');
         }
     }   
 }
@@ -145,7 +171,7 @@ export class URLProperty extends StringProperty {
         if (this.urlRegex.test(value)) {
             return value;            
         } else {
-            return null;
+            throw new Error('value failed URL regex');
         }
     }    
 }
@@ -171,7 +197,7 @@ export class StringSelect extends StringProperty {
                 if ((typeof value) === 'string') {
                     this.options.push(value as string);
                 } else {
-                    throw new Error("usingEnum must only contain string values.");
+                    throw new Error("usingEnum must only contain string values");
                 }
 
                 if (value == defaultValue) {
@@ -189,15 +215,11 @@ export class StringSelect extends StringProperty {
     }
 
     protected acceptAny(value: any) : string {
-        //Check if it's a string
-        if ((typeof value) === 'string') {
-            if (this.options.includes(value)) {
-                return value;
-            } else {
-                return null;
-            }
+        let strValue = super.acceptAny(value);
+        if (this.options.includes(strValue)) {
+            return strValue;
         } else {
-            return null;
+            throw new Error('value was not in the list of options');
         }
     }
 
@@ -273,26 +295,19 @@ export class SaveableFromFactorySelect<T extends SaveableObject> extends Validat
 
             //Fill newObject with the serialized data provided by the user (method varies depending on type of SaveableObject)
             if (ImmutableSaveableObject.isInstance(fromFactory)) {
-                try {
-                    return fromFactory.deserializeToNew<ImmutableSaveableObject>(value.obj);
-                } catch {
-                    return null;
-                }
+                return fromFactory.deserializeToNew<ImmutableSaveableObject>(value.obj);
             } else if (ImmutableSaveableObjectWithConstructor.isInstance(fromFactory)) {
-                try { //please forgive my type-safety transgressions, oh lord TS Compiler, I give my word that it will be okay
-                    return fromFactory.deserializeToNew<ImmutableSaveableObjectWithConstructor>(() => <any> this.factory.constructInstanceOf(value.alias), value.obj);
-                } catch {
-                    return null;
-                }
+                //please forgive my type-safety transgressions, oh lord TS Compiler, I give my word that it will be okay
+                return fromFactory.deserializeToNew<ImmutableSaveableObjectWithConstructor>(() => <any> this.factory.constructInstanceOf(value.alias), value.obj);
             } else if (MutableSaveableObject.isInstance(fromFactory)) {
-                if (fromFactory.deserializeFrom(value.obj) === false) return null;
+                if (fromFactory.deserializeFrom(value.obj) === false) throw new Error('deserialization failed');
                 return fromFactory;
             } else {
-                return null; //Unknown SaveableObject type
+                throw new Error('unknown SaveableObject type');
             }
 
         } else {
-            return null; //value wasn't a SerializedObjWithAlias
+            throw new Error('value was not a SerializedObjWithAlias'); //value wasn't a SerializedObjWithAlias
         }
     }
 
@@ -322,10 +337,11 @@ export class IPAddress extends StringProperty {
     readonly type = 'ip';
 
     protected acceptAny(value: any) : string {
-        if ((typeof value) === 'string' && this.isIP(value)) {
-            return value;
+        let strValue = super.acceptAny(value);
+        if (this.isIP(strValue)) {
+            return strValue;
         } else {
-            return null;
+            throw new Error('value is not a valid IP address');
         }
     }
     
@@ -381,20 +397,21 @@ export class TreePath extends StringProperty {
     }
 
     getValueAsPathArray() : string[] {
-        return this.getValue().split('/').filter((str: string) => str != "");
+        return this.strToPath(this.getValue());
+    }
+
+    private strToPath(value: string) : string[] {
+        return value.split('/').filter((str: string) => str != "");
     }
 
     protected acceptAny(value: any) : string {
-        if ((typeof value === 'string')) {
-            let pathArray = this.getValueAsPathArray();
-            //Verify that the provided path leads to a valid node
-            if (this.tree.getNodeAtPath(pathArray) != null) {
-                return value;
-            } else {
-                return null;
-            }
+        let strValue = super.acceptAny(value);
+        let pathArray = this.strToPath(strValue);
+        //Verify that the provided path leads to a valid node
+        if (this.tree.getNodeAtPath(pathArray) != null) {
+            return strValue;
         } else {
-            return null;
+            throw new Error('provided tree path was invalid')
         }
     }
 

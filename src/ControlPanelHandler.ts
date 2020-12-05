@@ -75,7 +75,7 @@ export default class ControlPanelHandler {
     }
 }
 
-//Decorators
+//Decorators (TODO: This is kind of a confusing mix of static and instance level scope because I just wanted to try decorators out. These should probably be replaced with regular calls to registerHandler in the constructor)
 
 const RequestMethodStoreKey = Symbol('CPRequestMethodKey');
 type StoredRequestMethod = {requestName: string, typeGuard: (reqData: any) => reqData is any}

@@ -102,7 +102,13 @@ startup.appendStep("Save data", (rerunState, l) => {
             if (!error) {
                 rerunState.userSettings = new RerunUserSettings();
                 let savePath = path.join(saveFolder, 'settings.json');
-                SaveableFileUtils.updateMutableFromFile(rerunState.userSettings, savePath).then(resolve).catch(reject);
+
+                if (fs.existsSync(savePath)) {
+                    SaveableFileUtils.updateMutableFromFile(rerunState.userSettings, savePath).then(resolve).catch(reject);
+                } else {
+                    SaveableFileUtils.writeSaveableToFile(rerunState.userSettings, savePath).then(resolve).catch(reject); //Write the default settings to the file
+                }
+
                 rerunState.userSettings.onPropertiesUpdated(() => SaveableFileUtils.writeSaveableToFile(rerunState.userSettings, savePath));
             } else {
                 l.error(error);
@@ -289,7 +295,12 @@ startup.appendStep("Download buffer", (rerunState, l) => {
 
     return new Promise((resolve, reject) => {
         try {
-            rerunState.downloadBuffer = new WebVideoDownloader(path.join(__dirname + '/../temp'));
+            let bufferPath = path.join(__dirname, '/../temp');
+            if (!fs.existsSync(bufferPath)) {
+                fs.mkdirSync(bufferPath);
+            }
+
+            rerunState.downloadBuffer = new WebVideoDownloader(bufferPath);
     
             rerunState.downloadBuffer.cleanBuffer().then((n) => {
                 if (n > 0) {
@@ -415,9 +426,14 @@ startup.appendStep('Rules', (rerunState, l) => {
     ruleActions.registerConstructor('Show a graphic', (r: PublicRerunComponents) => new ShowGraphicAction(r.graphicsManager, r.player));
 
     let slateAfterEach = new Rule(ruleConditions, ruleActions);
-    slateAfterEach.condition.trySetValue({
+    let cError = slateAfterEach.condition.trySetValue({
         alias: 'During a block',
         obj: { neeee: 'nooo' }
+    });
+
+    let aError = slateAfterEach.action.trySetValue({
+        alias: 'Show a graphic',
+        obj: { aaaa: 'bbbbb' }
     });
 
     return Promise.resolve();
