@@ -42,7 +42,7 @@ const jsdom = require("jsdom");
 const { JSDOM } = jsdom;
 
 const supportedVideoExtensions = ['.mp4', '.mkv', '.flv', '.avi', '.m4v', '.mov'];
-const saveFolder = path.join(__dirname, 'userdata');
+const saveFolder = path.join(path.dirname(process.execPath), 'userdata');
 
 /**
  * A container class holding a bunch of components making up Rerun.
