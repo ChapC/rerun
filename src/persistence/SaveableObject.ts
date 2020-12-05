@@ -80,9 +80,9 @@ export function AfterDeserialize() : (target: any, propertyKey: string, descript
         if (typeof(target) === 'function') throw new Error('AfterDeserialize cannot be used in a static context');
 
         //We'll store the name of the decorated function on the prototype so ImmutableSaveableObject can find it later
-        if (target[afterDeserializeMethodKey]) throw new Error('Only one AfterDeserialize method allowed per class');
+        if (Reflect.hasMetadata(afterDeserializeMethodKey, target)) throw new Error('Only one AfterDeserialize method allowed per class');
 
-        target[afterDeserializeMethodKey] = propertyKey;
+        Reflect.defineMetadata(afterDeserializeMethodKey, propertyKey, target);
     }
 }
 
@@ -189,9 +189,9 @@ export abstract class ImmutableSaveableObjectWithConstructor extends SaveableObj
             throw new Error(`Failed to deserialize: The following propert${ taggedPropertyKeys.length === 0 ? 'y was' : 'ies were' } not present on the serialized object ${taggedPropertyKeys}`);
         }
 
-        let afterDeserializeMethod = newObj.prototype[afterDeserializeMethodKey];
-        if (afterDeserializeMethodKey) {
-            afterDeserializeMethod();
+        let afterDeserializeMethod: string = Reflect.getMetadata(afterDeserializeMethodKey, newObj);//newObj.prototype[afterDeserializeMethodKey];
+        if (afterDeserializeMethod) {
+            newObj[afterDeserializeMethod]();
         }
 
         return newObj;
