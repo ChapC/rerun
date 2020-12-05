@@ -2,7 +2,7 @@ const colors = require('colors');
 
 export default class PrefixedLogger {
     private prefix: string;
-    constructor (loggerName: string) {
+    constructor (private loggerName: string) {
         this.prefix = "[" + loggerName + "] ";
     }
 
@@ -41,5 +41,9 @@ export default class PrefixedLogger {
         } else {
             console.error(colors.red(this.prefix + message));
         }
+    }
+
+    withSuffix(addedSuffix: string) : PrefixedLogger {
+        return new PrefixedLogger(`${this.loggerName}-${addedSuffix}`);
     }
 }

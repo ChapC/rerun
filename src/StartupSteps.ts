@@ -1,18 +1,50 @@
 import PrefixedLogger from "./helpers/PrefixedLogger";
 import { PublicRerunComponents } from ".";
-import process from 'process';
 
-const keypress = require('keypress');
 const colors = require('colors');
 
 type StepFunctionPromise = ((rerunState: PublicRerunComponents, logger: PrefixedLogger) => Promise<void>);
 type StepFunctionVoid = ((rerunState: PublicRerunComponents, logger: PrefixedLogger) => void);
+
 export default class StartupSteps {
     private steps : StoredStep[] = [];
     private logger = new PrefixedLogger("Startup");
 
-    constructor(private rerunState: PublicRerunComponents) {
-        keypress(process.stdin);
+    constructor(private rerunState: PublicRerunComponents) {}
+
+    private succeededStepsCount = 0;
+    
+    start() {
+        this.succeededStepsCount = 0;
+
+        const asyncSequence = async () => {
+            for (let step of this.steps) {
+                try {
+                    this.logger.info(`Running startup for '${step.key}'`);
+                    await step.run(this.rerunState, this.logger.withSuffix(step.key));
+                    this.logger.info(`'${step.key}' completed startup`);
+                    this.succeededStepsCount++;
+                } catch (err) {
+                    //A step has failed - abort startup
+                    this.logger.error(`Error in '${step.key}'`, err);
+                    try {
+                        this.cleanupSucceededSteps(); //Run cleanup to gracefully shutdown anything that was set up in previous steps
+                    } finally {
+                        this.logger.error('An error prevented Rerun from starting properly. Relaunch the app to try again.');
+                        process.exit(1);
+                    }
+                }
+            }
+        }
+
+        asyncSequence();
+    }
+
+    //Clean up all startup steps that have completed successfully
+    private cleanupSucceededSteps() {
+        for (let i = 0; i < this.succeededStepsCount; i++) {
+            this.steps[i].cleanUp();
+        }
     }
 
     appendStep(stepKey: string, step: StepFunctionPromise, cleanUp: () => void) {
@@ -43,64 +75,6 @@ export default class StartupSteps {
         this.steps.splice(targetIndex, 0, new StoredStep(stepKey, step, cleanUp));
     }
 
-    private succeededStepsCount = 0;
-    private startupFailed = false;
-
-    didStartSuccessfully() {
-        return !this.startupFailed && this.succeededStepsCount == this.steps.length
-    }
-    
-    start() {
-        this.cleanupSucceededSteps();
-        process.stdin.off('keypress', this.restartOrCancel);
-        this.startupFailed = false;
-        this.succeededStepsCount = 0;
-        const startPromises = this.steps.reduce((promiseChain: any, currentStep: StoredStep, currentIndex, array) => {
-            return promiseChain.then(() => {
-                if (!this.startupFailed) {
-                    return currentStep.run(this.rerunState, new PrefixedLogger("Startup-" + currentStep.key)).then(() => this.succeededStepsCount++);
-                } else {
-                    return Promise.reject();
-                }
-            }).catch((error: any) => {
-                this.logger.error(colors.red("Failed to start Rerun - error in " + currentStep.key, error));
-                this.startupFailed = true;
-            })
-        }, Promise.resolve());
-
-        startPromises.then(() => {
-            if (!this.startupFailed) {
-                console.info(colors.green('Rerun ready!'));
-            } else {
-                console.info("An error prevented Rerun from starting properly. Press enter to try again or Ctrl+C to exit.");
-                process.stdin.on('keypress', this.restartOrCancel);          
-            }
-        });
-    }
-
-    //Clean up all the completed steps
-    private cleanupSucceededSteps() {
-        for (let i = 0; i < this.succeededStepsCount; i++) {
-            this.steps[i].cleanUp();
-        }
-    }
-    
-    private restartOrCancel = (chunk: any, key: any) => {
-        if (key) {
-            if (key.name === "c" && key.ctrl) {
-                process.stdin.off('keypress', this.restartOrCancel);
-
-                //Quit
-                console.info('Shutdown');
-                this.cleanupSucceededSteps();
-                process.exit();
-            } else if (key.name === "return" || key.name === "enter" || key.name === 'm') {//Keypress returns the 'm' key instead of enter on my system?
-                console.info('Restarting...\n');
-                this.cleanupSucceededSteps();
-                this.start();
-            }
-        }
-    }
 }
 
 class StoredStep {
