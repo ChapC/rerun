@@ -7,6 +7,7 @@ import { ControlPanelListener, ControlPanelRequest } from "../ControlPanelHandle
 import { WSConnection } from "../helpers/WebsocketConnection";
 import { GraphicsLayerLocation } from "../playback/MediaLocations";
 import { ContentBlock } from "../playback/ContentBlock";
+import { Player } from "../playback/Player";
 const recursive = require("recursive-readdir");
 const path = require('path');
 const jsdom = require("jsdom");
@@ -22,20 +23,18 @@ export class GraphicManager {
 
     private serverAddress : string;
     private connectedWebsockets : Map<string, WebSocket[]> = new Map(); //<GraphicsLayerReference.toString(), list of websockets displaying this layer>
-    private fetchPlayingBlocks : () => ContentBlock[];
     private expressApp : any;
 
-    constructor(graphicsFolder: PathLike, serverAddress: string, getPlayingBlocks: () => ContentBlock[], expressApp: any) {
+    constructor(graphicsFolder: PathLike, serverAddress: string, private getPlayer: () => Player, expressApp: any) {
         this.graphicsFolder = graphicsFolder;
         this.serverAddress = serverAddress;
-        this.fetchPlayingBlocks = getPlayingBlocks;
         this.expressApp = expressApp;
     }
 
     //Sends a graphic event to websockets from the target layer (and optionally the target websocket)
     sendGraphicEvent = (event:string, toLayer:GraphicLayerReference, toSocket?:WebSocket) => {
         //Graphic events contain the event name and the player's current state
-        let eventObj = {name: event, playerState: this.fetchPlayingBlocks()}
+        let eventObj = {name: event, playingBlocks: this.getPlayer().getPlayingBlocks(), playerQueue: this.getPlayer().getQueue()}
     
         if (toSocket) { //Send the event to toSocket only
             //We still need to check that toSocket is subscribed to toLayer's events
@@ -71,11 +70,13 @@ export class GraphicManager {
         socketList.push(socket);
 
         //Check if this graphic layer is currently playing and, if so, send the start event now
-        const currentBlock = this.fetchPlayingBlocks()[0];
-        if (currentBlock.media.type === MediaObject.MediaType.RerunGraphic) {
-            let layerLocation = currentBlock.media.location as GraphicsLayerLocation;
-            if (forLayer.isEqual(layerLocation.getLayerRef())) {
-                this.sendGraphicEvent('in', layerLocation.getLayerRef(), socket);
+        let currentBlocks = this.getPlayer().getPlayingBlocks();
+        for (let block of currentBlocks) {
+            if (block.media.type === MediaObject.MediaType.RerunGraphic) {
+                let layerLocation = block.media.location as GraphicsLayerLocation;
+                if (forLayer.isEqual(layerLocation.getLayerRef())) {
+                    this.sendGraphicEvent('in', layerLocation.getLayerRef(), socket);
+                }
             }
         }
     }

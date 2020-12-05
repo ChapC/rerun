@@ -211,7 +211,7 @@ startup.appendStep("Graphics packages", (rerunState, l) => {
     const packagePath = './graphics';
 
     //TODO: Create /graphics if it doesn't exist
-    rerunState.graphicsManager = new GraphicManager(packagePath, rerunState.localIP, () => rerunState.player.getPlayingBlocks(), app);
+    rerunState.graphicsManager = new GraphicManager(packagePath, rerunState.localIP, () => rerunState.player, app);
     
     //Serve up all the static files in the graphics package path (JS, images)
     app.use('/graphics', express.static(packagePath));
