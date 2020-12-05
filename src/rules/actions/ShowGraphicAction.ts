@@ -14,7 +14,7 @@ export default class ShowGraphicAction extends RuleAction {
     @SaveableProperty()
     readonly targetLayerPath = new TreePath('Graphic layer', this.graphicManager.graphicsTree);
     @SaveableProperty()
-    readonly onScreenDurationSeconds = new NumberProperty('Duration (secs)', 5);
+    readonly onScreenDurationSecs = new NumberProperty('Duration (secs)', 5);
 
     private graphicContentBlock: ContentBlock = null;
 
@@ -24,7 +24,7 @@ export default class ShowGraphicAction extends RuleAction {
     private init() {
         //Create a ContentBlock with the target layer and time
         let targetLayer = this.graphicManager.graphicsTree.getNodeAtPath(this.targetLayerPath.getValueAsPathArray()).value as GraphicLayer;
-        let mediaObj = new MediaObject(MediaObject.MediaType.RerunGraphic, targetLayer.name, new GraphicsLayerLocation(targetLayer.asReference), this.onScreenDurationSeconds.getValue() * 1000);
+        let mediaObj = new MediaObject(MediaObject.MediaType.RerunGraphic, targetLayer.name, new GraphicsLayerLocation(targetLayer.asReference), this.onScreenDurationSecs.getValue() * 1000);
         this.graphicContentBlock = new ContentBlock(mediaObj);
     }
 
