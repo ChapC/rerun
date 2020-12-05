@@ -3,7 +3,7 @@ const initRerunReference = () => {
     window.rerun = { version: 0.1 }
     const wsAddress = 'ws://' + localIP + ":8080/graphicEvents?layer=" + mLayerName;
 
-    console.info("[node-rerun] Version " + window.rerun.version);
+    console.info("[rerun] Version " + window.rerun.version);
 
     let reconnectTimeout = null;
     function attemptReconnect() {
@@ -15,7 +15,7 @@ const initRerunReference = () => {
     }
 
     function onConnectionLost(event) {
-        console.error("[node-rerun] Lost connection to rerun server: ", event)
+        console.error("[rerun] Lost connection to rerun server: ", event)
         
         clearTimeout(reconnectTimeout);
         reconnectTimeout = setTimeout(attemptReconnect, 5000);
@@ -35,7 +35,7 @@ const initRerunReference = () => {
         ws = new WebSocket(wsAddress);
 
         ws.addEventListener('open', () => {
-            console.info("[node-rerun] Connected to node-rerun server at " + localIP);
+            console.info("[rerun] Connected to rerun server at " + localIP);
             ws.addEventListener('error', onConnectionLost);
             ws.addEventListener('close', onConnectionLost);
             heartbeat();      
@@ -49,7 +49,7 @@ const initRerunReference = () => {
 
             let message = event.data;
             let serverEvent = JSON.parse(message);
-            console.info('[node-rerun] Event from server: ' + serverEvent.name);
+            console.info('[rerun] Event from server: ' + serverEvent.name);
             dispatchEvent(serverEvent);
         });
     }
