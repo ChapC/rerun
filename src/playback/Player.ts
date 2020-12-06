@@ -713,7 +713,7 @@ export class Player extends MultiListenable {
 
         this.log.info('Stopping to default block');
         //Stop playback of all branches except the primary one
-        for (let i = this.playbackFront.length - 1; i > 0; i++) {
+        for (let i = this.playbackFront.length - 1; i > 0; i--) {
             this.releasePlayingNode(i);
         }
 
