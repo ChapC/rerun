@@ -12,7 +12,7 @@ import { MultiListenable } from './MultiListenable';
 */
 //TODO: This WS protocol should support a Pub/Sub system. The current onAlert method should be replaced with a subscribe request. Subscription updates should be cached on the receiving end.
 
-export class WSConnection extends MultiListenable {
+export class WSConnection extends MultiListenable<string, any> {
     private queuedForSend: string[] = []; //Messages sent before the socket is opened will be queued
 
     constructor(private ws: WebSocket) {
@@ -165,7 +165,7 @@ export class WSConnection extends MultiListenable {
     }
 
     oneAlert(alertName: string, callback: (ev: any) => void) : number {
-        return this.one('alert' + alertName, callback);
+        return this.once('alert' + alertName, callback);
     }
 
     //Interested parties may register handlers for certain request types

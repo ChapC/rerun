@@ -19,7 +19,7 @@ import RenderHierarchy from './renderers/RenderHierarchy';
 *   - "queueChanged": The queue was updated. EventData contains the new queue.
 */
 @ControlPanelListener
-export class Player extends MultiListenable {
+export class Player extends MultiListenable<string, any> {
     private readonly maxPreloadedBlocks = 6; //The maximum number of blocks that will be preloaded into renderers in advance
     private readonly playerTickRateMs = 100;
 
