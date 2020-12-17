@@ -1,5 +1,4 @@
 type EventCallback<TEventObj> = { id: number, callback: (e: TEventObj) => void};
-type ListenerGroupKey = number | string;
 
 export abstract class MultiListenable<TEventKey, TEventData> {
     private listenerIdCounter = 0;
@@ -207,5 +206,11 @@ export class ListenerGroup<TEventKey, TEventData> {
         for (let l of this.listeners) {
             this.parentListenable.off(l);
         }
+    }
+}
+
+export class ControllableMultiListenable<TEventKey, TEventData> extends MultiListenable<TEventKey, TEventData> {
+    public fireEvent(eventName:TEventKey, eventData:TEventData) {
+        super.fireEvent(eventName, eventData);
     }
 }

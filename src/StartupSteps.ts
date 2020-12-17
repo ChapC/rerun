@@ -31,7 +31,8 @@ export default class StartupSteps {
                         this.cleanupSucceededSteps(); //Run cleanup to gracefully shutdown anything that was set up in previous steps
                     } finally {
                         this.logger.error('An error prevented Rerun from starting properly. Relaunch the app to try again.');
-                        process.exit(1);
+                        process.exitCode = 1;
+                        return;
                     }
                 }
             }

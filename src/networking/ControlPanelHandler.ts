@@ -1,5 +1,6 @@
-import { WSConnection } from './helpers/WebsocketConnection';
+import { WSConnection, WSEvent } from './WebsocketConnection';
 import WebSocket from 'ws';
+import WSPublishRepeater from './WSPublishRepeater';
 
 /**
  * A singleton storing all active control panel websockets. 
@@ -24,12 +25,15 @@ export default class ControlPanelHandler {
         let wsConn = new WSConnection(ws);
         this.connectedControlPanels.push(wsConn);
 
-        wsConn.on('close', () => this.connectedControlPanels.splice(this.connectedControlPanels.indexOf(wsConn), 1));
+        wsConn.on(WSEvent.Close, () => this.connectedControlPanels.splice(this.connectedControlPanels.indexOf(wsConn), 1));
 
         //Attach all the stored request handlers onto this socket
         Object.keys(this.requestHandlers).forEach(requestName => this.requestHandlers[requestName](wsConn));
+        //Add this socket to the publish group
+        this.publishRepeater.addWebsocket(wsConn);
     }
 
+    private publishRepeater = new WSPublishRepeater();
     private requestHandlers : {[requestName: string] : (ws: WSConnection) => void} = {};
     /**
      * Register a handler for a control panel request. 
@@ -44,7 +48,7 @@ export default class ControlPanelHandler {
             return;
         }
         //Attach the handler to all active control panels
-        let attachFunction = (ws: WSConnection) => ws.addGuardedRequestHandler<TRequestData>(requestName, typeGuard, handler);
+        let attachFunction = (ws: WSConnection) => ws.setGuardedRequestHandler<TRequestData>(requestName, typeGuard, handler);
         this.connectedControlPanels.map((ws) => attachFunction(ws));
         //Store the request attach function for future control panel sockets
         this.requestHandlers[requestName] = attachFunction;
@@ -60,18 +64,18 @@ export default class ControlPanelHandler {
             console.warn(`There are multiple request handlers registered for the ${requestName} endpoint`);
             return;
         }
-        let attachFunction = (ws: WSConnection) => ws.addRequestHandler(requestName, handler);
+        let attachFunction = (ws: WSConnection) => ws.setRequestHandler(requestName, handler);
         this.connectedControlPanels.map(ws => attachFunction(ws));
         this.requestHandlers[requestName] = attachFunction;
     }
 
     /**
-     * Send an alert to all control panels.
-     * @param event Name of the event
-     * @param data Event content (optional)
+     * Publish a message to all connected control panel clients.
+     * @param channel Channel to publish on
+     * @param message Data to publish
      */
-    sendAlert(event: string, data?: any) {
-        this.connectedControlPanels.forEach(ws => ws.sendAlert(event, data));
+    publish(channel: string, message: any) {
+        this.publishRepeater.publish(channel, message);
     }
 }
 

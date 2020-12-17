@@ -1,6 +1,6 @@
 import { IPAddress } from "./persistence/ValidatedProperty";
-import { ControlPanelListener, ControlPanelRequest } from "./ControlPanelHandler";
-import { WSConnection } from "./helpers/WebsocketConnection";
+import { ControlPanelListener, ControlPanelRequest } from "./networking/ControlPanelHandler";
+import { WSConnection } from "./networking/WebsocketConnection";
 import { MutableSaveableObject, SaveableProperty } from "./persistence/SaveableObject";
 
 @ControlPanelListener
@@ -10,7 +10,7 @@ export default class RerunUserSettings extends MutableSaveableObject {
 
     @ControlPanelRequest('getUserSettings')
     private getUserSettings() {
-        return new WSConnection.SuccessResponse('UserSettings', this.toJSON());
+        return new WSConnection.SuccessResponse(this.toJSON());
     }
 
     @ControlPanelRequest('setUserSetting', WSConnection.AcceptAny)

@@ -43,6 +43,18 @@ export default class PrefixedLogger {
         }
     }
 
+    debug(message: string) : void;
+    debug(object: any) : void;
+    debug(message: string, object: any) : void; 
+
+    debug(message?: string, object?: any) {
+        if (object) {
+            console.debug(colors.grey(this.prefix + message), object);
+        } else {
+            console.debug(colors.grey(this.prefix + message));
+        }
+    }
+
     withSuffix(addedSuffix: string) : PrefixedLogger {
         return new PrefixedLogger(`${this.loggerName}-${addedSuffix}`);
     }

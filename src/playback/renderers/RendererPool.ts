@@ -1,16 +1,18 @@
 import { ContentRenderer } from "./ContentRenderer";
 import { MediaObject } from "../MediaObject";
 import PrefixedLogger from "../../helpers/PrefixedLogger";
+import { PlaybackOffset } from "../Player";
+import { type } from "os";
 
-/*
-    A pool of offscreen ContentRenderers. 
-*/
 type RendererFactory = (id: number) => ContentRenderer;
+/**
+ * A dynamically-allocated pool of ContentRenderers.
+ */
 export default class RendererPool {
     private l = new PrefixedLogger("RendererPool");
     private rendererIdCounter = 0;
     private availableRenderers: Map<MediaObject.ContentType, ContentRenderer[]> = new Map();
-    private leasedRenderers: Map<number, ContentRenderer> = new Map();
+    private leasedRenderers: Map<number, { renderer: ContentRenderer, proxy: ContentRenderer, revoke: () => void }> = new Map();
 
     private rendererFactories: Map<MediaObject.ContentType, RendererFactory> = new Map();
 
@@ -27,7 +29,7 @@ export default class RendererPool {
         }
     }
 
-    getRenderer(forContentType: MediaObject.ContentType) : PooledContentRenderer {
+    getRenderer(forContentType: MediaObject.ContentType) : LeasedContentRenderer {
         let capableRenderers = this.availableRenderers.get(forContentType);
         if (capableRenderers == null) {
             capableRenderers = [];
@@ -38,48 +40,62 @@ export default class RendererPool {
         if (capableRenderers.length == 0) {
             //No renderers are pooled for this content type. Create one
             selectedRenderer = this.createNewRenderer(forContentType);
+            selectedRenderer.onStatusUpdated((s) => this.l.debug(`Renderer ${forContentType}-${selectedRenderer.id} updated status from ${s.oldStatus} -> ${s.newStatus}`));
         } else {
             selectedRenderer = capableRenderers.pop();
         }
 
-        this.leasedRenderers.set(selectedRenderer.id, selectedRenderer);
-        return new PooledContentRenderer(selectedRenderer, this);
+        let proxyHandler: ProxyHandler<ContentRenderer> = {
+            get: (target, property, receiver) => {
+                if (property === 'release') {
+                    return () => this.returnRenderer(selectedRenderer.id);
+                } else {
+                    let value = Reflect.get(target, property, receiver);
+                    if (typeof value === 'function') {
+                        return value.bind(target);
+                    } else {
+                        return value;
+                    }
+                }
+            }
+        }
+
+        let leaseProxy = Proxy.revocable<ContentRenderer>(selectedRenderer, proxyHandler);
+        this.leasedRenderers.set(selectedRenderer.id, { renderer: selectedRenderer, proxy: leaseProxy.proxy, revoke: leaseProxy.revoke });
+
+        return leaseProxy.proxy as LeasedContentRenderer;
     }
 
-    returnRenderer(pooledLease: PooledContentRenderer) {
-        if (this.leasedRenderers.has(pooledLease.id)) {
-            let renderer = this.leasedRenderers.get(pooledLease.id);
+    returnRenderer(rendererId: number) {
+        if (this.leasedRenderers.has(rendererId)) {
+            let lease = this.leasedRenderers.get(rendererId);
+            //Revoke outside access to the renderer through LeasedContentRenderer
+            lease.revoke();
             //Disable the renderer
-            renderer.stop();
-            renderer.getOBSSource().setEnabled(false);
+            lease.renderer.cancelAllListeners();
+            lease.renderer.stopAndUnload();
+            lease.renderer.getOBSSource().setEnabled(false);
             //Return it to the available list
-            this.leasedRenderers.delete(pooledLease.id);
-            if (this.availableRenderers.get(renderer.supportedContentType) == null) this.availableRenderers.set(renderer.supportedContentType, []);
-            this.availableRenderers.get(renderer.supportedContentType).push(renderer);
+            this.leasedRenderers.delete(rendererId);
+            if (this.availableRenderers.get(lease.renderer.supportedContentType) == null) this.availableRenderers.set(lease.renderer.supportedContentType, []);
+            this.availableRenderers.get(lease.renderer.supportedContentType).push(lease.renderer);
         } else {
-            this.l.warn(`Tried to return ContentRenderer ${pooledLease.id}, but that renderer was not acquired from this pool.`);
+            this.l.warn(`Tried to return ContentRenderer ${rendererId}, but that renderer was not acquired from this pool.`);
         }
     }
 }
 
-export class PooledContentRenderer implements ContentRenderer {
-    readonly id: number;
-    readonly supportedContentType: MediaObject.ContentType;
-    constructor(private renderer: ContentRenderer, private parentPool: RendererPool) {
-        this.id = renderer.id;
-        this.supportedContentType = renderer.supportedContentType;
-    }
-    
-    //Return the renderer back to the pool
-    release() {
-        this.renderer = null; //Prevent further changes to this renderer
-        this.parentPool.returnRenderer(this);
-    }
-
-    loadMedia(media: MediaObject): Promise<void> { return this.renderer.loadMedia(media); }
-    getLoadedMedia(): MediaObject { return this.renderer.getLoadedMedia(); }
-    play(): Promise<void> { return this.renderer.play(); }
-    stop(): Promise<void> { return this.renderer.stop(); }
-    restartMedia(): Promise<void> { return this.renderer.restartMedia(); }
-    getOBSSource() { return this.renderer.getOBSSource(); }
+/**
+ * A ContentRenderer that has been leased from a RendererPool.
+ * 
+ * Once you're finished with it, return it to the pool by calling
+ * release().
+ */
+export interface LeasedContentRenderer extends ContentRenderer {
+    /**
+     * Return the renderer back to the pool.
+     * 
+     * After calling this method the lease becomes invalid. Subsequent accesses on this object will throw TypeError.
+     */
+    release() : void;
 }

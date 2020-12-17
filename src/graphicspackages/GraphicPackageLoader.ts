@@ -1,102 +1,33 @@
-import fs, { PathLike, Stats } from "fs";
-import WebSocket = require("ws");
-import { MediaObject } from "../playback/MediaObject";
+import fs, { Stats } from "fs";
+import Express from "express";
 import { Request, Response } from "express";
 import { Tree } from "../helpers/Tree";
-import { ControlPanelListener, ControlPanelRequest } from "../ControlPanelHandler";
-import { WSConnection } from "../helpers/WebsocketConnection";
-import { GraphicsLayerLocation } from "../playback/MediaLocations";
+import { ControlPanelListener, ControlPanelRequest } from "../networking/ControlPanelHandler";
+import { WSConnection } from "../networking/WebsocketConnection";
 import { ContentBlock } from "../playback/ContentBlock";
-import { Player } from "../playback/Player";
+import { MediaObject } from "../playback/MediaObject";
+import { GraphicsLayerLocation } from "../playback/MediaLocations";
 const recursive = require("recursive-readdir");
 const path = require('path');
 const jsdom = require("jsdom");
 const { JSDOM } = jsdom;
 
-const initRerunReference = require('./graphicLayerInjection').script;
-
 @ControlPanelListener
-export class GraphicManager {
-    private graphicsFolder : PathLike; //The root folder to scan for graphics packages
+export class GraphicPackageLoader {
     //All graphics packages and layers. The first layer of the tree is packages, the second is layers.
     readonly graphicsTree: Tree<GraphicPackage, GraphicLayer> = new Tree(new Tree.BranchNode('Graphics packages'));
 
-    private serverAddress : string;
-    private connectedWebsockets : Map<string, WebSocket[]> = new Map(); //<GraphicsLayerReference.toString(), list of websockets displaying this layer>
-    private expressApp : any;
+    constructor(
+        private graphicsFolder: string, //The root folder to scan for graphics packages
+        private expressApp: Express.Application,
+        private readonly browserClientPath: string,
+        private readonly rAppVersion: number
+    ) {}
 
-    constructor(graphicsFolder: PathLike, serverAddress: string, private getPlayer: () => Player, expressApp: any) {
-        this.graphicsFolder = graphicsFolder;
-        this.serverAddress = serverAddress;
-        this.expressApp = expressApp;
-    }
-
-    //Sends a graphic event to websockets from the target layer (and optionally the target websocket)
-    sendGraphicEvent = (event:string, toLayer:GraphicLayerReference, toSocket?:WebSocket) => {
-        //Graphic events contain the event name and the player's current state
-        let eventObj = {name: event, playingBlocks: this.getPlayer().getPlayingBlocks(), playerQueue: this.getPlayer().getQueue()}
-    
-        if (toSocket) { //Send the event to toSocket only
-            //We still need to check that toSocket is subscribed to toLayer's events
-            let layerSockets = this.connectedWebsockets.get(toLayer.toString());
-            if (layerSockets == null || layerSockets.indexOf(toSocket) === -1) {
-                return; //toSocket is not meant to receive this event
-            }
-
-            if (toSocket.readyState === 1) {
-                toSocket.send(JSON.stringify(eventObj));
-            }
-        } else { //Send the event to all graphic clients
-            console.info('[Graphic event-' + toLayer +'] ' + event);
-            let layerSockets = this.connectedWebsockets.get(toLayer.toString());
-            if (layerSockets == null) {
-                return; //There are no sockets listening for events on this layer
-            }
-            for (let socket of layerSockets) {
-                if (socket.readyState === 1) {
-                    socket.send(JSON.stringify(eventObj));
-                }
-            }
-        }
-    }
-
-    //Registers a websocket to receive graphic events for the target layer
-    addWebsocket(socket: WebSocket, forLayer:GraphicLayerReference) {
-        let socketList = this.connectedWebsockets.get(forLayer.toString());
-        if (socketList == null) {
-            this.connectedWebsockets.set(forLayer.toString(), []);
-            socketList = this.connectedWebsockets.get(forLayer.toString());
-        }
-        socketList.push(socket);
-
-        //Check if this graphic layer is currently playing and, if so, send the start event now
-        let currentBlocks = this.getPlayer().getPlayingBlocks();
-        for (let block of currentBlocks) {
-            if (block.media.type === MediaObject.MediaType.RerunGraphic) {
-                let layerLocation = block.media.location as GraphicsLayerLocation;
-                if (forLayer.isEqual(layerLocation.getLayerRef())) {
-                    this.sendGraphicEvent('in', layerLocation.getLayerRef(), socket);
-                }
-            }
-        }
-    }
-
-    removeWebsocket(socket: WebSocket, forLayer:GraphicLayerReference) {
-        let socketList = this.connectedWebsockets.get(forLayer.toString());
-        if (socketList == null) {
-            return;
-        }
-
-        for (let i = 0; i < socketList.length; i++) {
-            if (socketList[i] === socket) {
-                socketList.splice(i, 1);
-                break;
-            }
-        }
-    }
-
-    //Scan the graphics folder for packages and set 'em up
-    importPackages() : Promise<GraphicPackage[]> {
+    /**
+     * Scan the graphics folder for packages and load 'em up.
+     */
+    public importPackages() : Promise<GraphicPackage[]> {
         this.graphicsTree.rootNode.clearChildren(); //Clear the tree
 
         //Only search for graphic packages (files called "graphicpackage.json")
@@ -123,7 +54,11 @@ export class GraphicManager {
                         
                         //Import the HTML of the package's layers and inject the rerun connection script into them
                         for (let layer of graphicPackage.layers) {
-                            let modifiedHTML = importGraphicHTML(path.join(path.dirname(filePath), layer.path), this.serverAddress, layer.asReference);
+                            let serverVars = {
+                                'rAppVersion': this.rAppVersion,
+                                'rLayerName': layer.name
+                            };
+                            let modifiedHTML = this.importGraphicHTML(path.join(path.dirname(filePath), layer.path), serverVars);
                             layer.html = modifiedHTML;
                             readyLayers.push(layer);
                         }
@@ -146,6 +81,33 @@ export class GraphicManager {
         });
     }
 
+    private readonly rerunBrowserScript = fs.readFileSync(this.browserClientPath).toString();
+    //Read in a graphic layer HTML file, inject the rerun script and return the resulting html document as a string
+    private importGraphicHTML(pathToHTMLFile:string, vars: {[variableKey: string] : any}) : string {
+        //Read in the HTML from the target file
+        let rawHTML = fs.readFileSync(pathToHTMLFile);
+
+        //Load it into a virtual DOM so that we can modify it
+        let graphicDom = new JSDOM(rawHTML);
+        //Inject some JS into the DOM that creates the window.rerun link for the graphic can access
+        let functionString = this.rerunBrowserScript;
+
+        //Replace any server-side variables with their string value
+        for (let varKey of Object.keys(vars)) {
+            let r = new RegExp(`"@rerunprop.${varKey}"`, 'g'); //Variables are specified in the client script as strings like "@rerunprop.mVarName"
+            functionString = functionString.replace(r, JSON.stringify(vars[varKey]));
+        }
+
+        let initRerunScriptTag = graphicDom.window.document.createElement("script");
+        initRerunScriptTag.innerHTML = functionString;
+        
+        //Add this script tag to <head> as the first child
+        let headTag = graphicDom.window.document.getElementsByTagName('head')[0];
+        headTag.insertBefore(initRerunScriptTag, headTag.firstChild);
+
+        return graphicDom.serialize();
+    }
+
     private activeLayerRoutes: string[] = [];
 
     private deployLayerRoutes(layers: GraphicLayer[]) {
@@ -164,7 +126,7 @@ export class GraphicManager {
                 This request will be redirected to the full url.
             */
 
-            const fullLayerURL = getLongLayerURL(layer);
+            const fullLayerURL = this.getLongLayerURL(layer);
             this.expressApp.get(fullLayerURL, (req: Request, res: Response) => {
                 res.send(layer.html);
             });
@@ -184,9 +146,61 @@ export class GraphicManager {
         return this.graphicsTree.rootNode.getChildren().map((packageNode) => packageNode.value as GraphicPackage);
     }
 
+    public getLongLayerURL = (layer: GraphicLayer | GraphicLayerReference) => {
+        let gLayer;
+        if (GraphicLayerReference.isInstance(layer)) {
+            gLayer = this.getLayerFromReference(layer);
+        } else {
+            gLayer = layer;
+        }
+
+        return `/${encodeURIComponent(gLayer.parentPackage.rootFolderPath).replace('%5C', '/')}/${encodeURIComponent(path.dirname(gLayer.path))}/`;
+    }
+
+    /**
+     * Get the GraphicLayer object referred to by a GraphicLayerReference.
+     * 
+     * @returns The referenced layer or null if none are found that match the reference.
+     */
+    public getLayerFromReference(layerRef: GraphicLayerReference) : GraphicLayer {
+        let layer = this.graphicsTree.getNodeAtPath([ layerRef.packageName, layerRef.layerName ]).value;
+        if (layer != null) {
+            return <GraphicLayer> layer;
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * Create a new ContentBlock that plays the given graphic.
+     * @param graphic Graphic to play in the ContentBlock
+     * @param durationMs (Optional) Duration of the MediaObject used in the ContentBlock. Defaults to infinite.
+     */
+    public createContentBlockWith(graphic: GraphicLayer | GraphicLayerReference, durationMs: number = -1) : ContentBlock {
+        let l;
+        if (GraphicLayerReference.isInstance(graphic)) {
+            l = this.getLayerFromReference(graphic);
+        } else {
+            l = graphic;
+        }
+
+        let mediaObj = new MediaObject(MediaObject.MediaType.RerunGraphic, l.name, new GraphicsLayerLocation(l.asReference), durationMs);
+        let block = new ContentBlock(mediaObj);
+
+        if (l.animationTimings.in) {
+            block.transitionInMs = l.animationTimings.in;
+        }
+
+        if (l.animationTimings.out) {
+            block.transitionOutMs = l.animationTimings.out;
+        }
+
+        return block;
+    }
+
     @ControlPanelRequest('getGraphicsPackages')
     private getGraphicsPackagesRequest() {
-        return new WSConnection.SuccessResponse('Available packages', this.getAvailablePackages());
+        return new WSConnection.SuccessResponse(this.getAvailablePackages());
     }
  }
 
@@ -203,39 +217,12 @@ function removeRoute(routePath: string, expressApp: any) {
     }
 }
 
-//Read in a graphic layer HTML file, inject the rerun script and return the resulting html document as a string
-function importGraphicHTML(pathToHTMLFile:string, localIP:string, layer: GraphicLayerReference) : string {
-    //Read in the HTML from the target file
-    let rawHTML = fs.readFileSync(pathToHTMLFile);
-
-    //Load it into a virtual DOM so that we can modify it
-    let graphicDom = new JSDOM(rawHTML);
-    //Inject some JS into the DOM that creates the window.rerun link for the graphic can access
-    let initFunctionString = initRerunReference.toString().slice(13, -1); //Remove the "function() {" and "}" from the function string
-    //Replace any server-side variables with their string value
-    initFunctionString = initFunctionString.replace(/localIP/g, "'" + localIP + "'");
-    initFunctionString = initFunctionString.replace(/mLayerName/g, "'" + encodeURIComponent(layer.toString()) + "'");
-    
-    let initRerunScriptTag = graphicDom.window.document.createElement("script");
-    initRerunScriptTag.innerHTML = initFunctionString;
-    
-    //Add this script tag to <head> as the first child
-    let headTag = graphicDom.window.document.getElementsByTagName('head')[0];
-    headTag.insertBefore(initRerunScriptTag, headTag.firstChild);
-
-    return graphicDom.serialize();
-}
-
 export function getShortLayerURL(layer: GraphicLayer | GraphicLayerReference) {
     if (GraphicLayerReference.isInstance(layer)) {
         return `/g/${encodeURIComponent(layer.packageName.toLowerCase().replace(/\s/g, ''))}/${encodeURIComponent(layer.layerName.toLowerCase().replace(/\s/g, ''))}`;
     } else {
         return `/g/${encodeURIComponent(layer.parentPackage.packageName.toLowerCase().replace(/\s/g, ''))}/${encodeURIComponent(layer.name.toLowerCase().replace(/\s/g, ''))}`;
     }
-}
-
-export function getLongLayerURL(layer: GraphicLayer) {
-    return `/${encodeURIComponent(layer.parentPackage.rootFolderPath).replace('%5C', '/')}/${encodeURIComponent(path.dirname(layer.path))}/`;
 }
 
 class GraphicPackage {
@@ -284,6 +271,7 @@ export class GraphicLayer {
     path: string; //The path to the raw HTML file
     name: string; //Friendly name of the layer
     animationTimings: {[eventName: string] : number}; //Map of [graphic event : animation duration]
+    dynamicDuration: boolean; //True if the graphic decides how long it will stay on screen for
     html: string; //Processed html string
 
     readonly asReference : GraphicLayerReference;
@@ -307,12 +295,18 @@ export class GraphicLayer {
             }
         }
 
+        if (object.dynamicDuration) {
+            layer.dynamicDuration = object.dynamicDuration;
+        } else {
+            layer.dynamicDuration = false;
+        }
+
         return layer;
     }
 
     toJSON() : any {
         return {
-            name: this.name, path: this.path, animationTimings: this.animationTimings
+            name: this.name, path: this.path, animationTimings: this.animationTimings, dynamicDuration: this.dynamicDuration
         }
     }
 }

@@ -1,6 +1,6 @@
 import { MediaObject } from './MediaObject';
 import { WebVideoDownloader } from '../WebVideoDownloader';
-import { GraphicLayerReference } from '../graphiclayers/GraphicManager';
+import { GraphicLayerReference } from '../graphicspackages/GraphicPackageLoader';
 
 export class LocalFileLocation extends MediaObject.Location {
     getType() {return MediaObject.ContentType.LocalFile};

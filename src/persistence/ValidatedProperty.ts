@@ -1,8 +1,8 @@
 import { SingleListenable } from "../helpers/SingleListenable";
 import DynamicFactory from "../helpers/DynamicFactory";
 import { Tree } from "../helpers/Tree";
-import ControlPanelHandler from "../ControlPanelHandler";
-import { WSConnection } from "../helpers/WebsocketConnection";
+import ControlPanelHandler from "../networking/ControlPanelHandler";
+import { WSConnection } from "../networking/WebsocketConnection";
 import { ImmutableSaveableObject, ImmutableSaveableObjectWithConstructor, MutableSaveableObject, SaveableObject } from "./SaveableObject";
 const uuidv4 = require('uuid/v4');
 
@@ -390,7 +390,7 @@ export class TreePath extends StringProperty {
         let targetNode = this.tree.getNodeAtPath(pathArray);
 
         if (targetNode != null) {
-            return new WSConnection.SuccessResponse('Found node', targetNode);
+            return new WSConnection.SuccessResponse(targetNode);
         } else {
             return new WSConnection.ErrorResponse('InvalidPath');
         }

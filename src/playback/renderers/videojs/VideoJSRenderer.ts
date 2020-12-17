@@ -2,13 +2,15 @@ import { ContentRenderer } from '../ContentRenderer';
 import { MediaObject } from '../../MediaObject';
 import { OBSSource } from '../../../../obs/RerunOBSBinding';
 import WebSocket = require('ws');
+import { PlaybackOffset } from '../../Player';
 
-export class VideoJSRenderer implements ContentRenderer {
+export class VideoJSRenderer extends ContentRenderer {
     readonly supportedContentType = MediaObject.ContentType.WebStream;
     private obsBrowserSource : OBSSource;
     private vjsSocket : WebSocket;
 
     constructor(readonly id: number, obsBrowserSource: OBSSource) {
+        super();
         this.obsBrowserSource = obsBrowserSource; //A browser source connected to the local vjs webpage
     }
 
@@ -29,7 +31,7 @@ export class VideoJSRenderer implements ContentRenderer {
         });
     }
 
-    stop() : Promise<void> {
+    stopAndUnload() : Promise<void> {
         return new Promise((resolve, reject) => {
             this.sendVJSRequest('pause').then(() => {
                 resolve();
@@ -49,7 +51,7 @@ export class VideoJSRenderer implements ContentRenderer {
         });
     }
 
-    restartMedia() : Promise<void> {
+    restart() : Promise<void> {
         return new Promise((resolve, reject) => {
             this.sendVJSRequest('restart').then(() => {
                 resolve();
@@ -57,7 +59,18 @@ export class VideoJSRenderer implements ContentRenderer {
         });
     }
 
+    getPlaybackProgressMs() : number {
+        throw Error("Method not implemented");
+    }
+
     getOBSSource() { return this.obsBrowserSource; }
+
+    public onceProgress(progress: PlaybackOffset, callback: () => void): number {
+        throw new Error('Method not implemented.');
+    }
+    public offProgress(listenerId: number): void {
+        throw new Error('Method not implemented.');
+    }
 
     //VideoJS websocket connection
     setVJSSocket(socket: WebSocket) : Boolean {

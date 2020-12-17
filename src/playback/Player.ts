@@ -1,30 +1,25 @@
 import {ContentBlock} from './ContentBlock';
 import {MediaObject} from './MediaObject';
 import {PublicRerunComponents} from '../index';
-import {MultiListenable} from '../helpers/MultiListenable';
+import {ListenerGroup, MultiListenable} from '../helpers/MultiListenable';
 import PrefixedLogger from '../helpers/PrefixedLogger';
-import { WSConnection } from '../helpers/WebsocketConnection';
-import { ControlPanelRequest, ControlPanelListener } from '../ControlPanelHandler';
+import { WSConnection } from '../networking/WebsocketConnection';
+import { ControlPanelRequest, ControlPanelListener } from '../networking/ControlPanelHandler';
 import { mediaObjectFromVideoFile } from "../contentsources/LocalDirectorySource";
 import fs from 'fs';
 import { mediaObjectFromYoutube } from "../contentsources/YoutubeChannelSource";
 import { ScheduleChange as QueueChange } from './QueueChange';
-import PlaybackContentNode, { NodePlaybackStatus, PlaybackOffset } from './PlaybackContentNode';
-import ContentRenderTrack from './renderers/ContentRenderTrack';
-import RendererPool, { PooledContentRenderer } from './renderers/RendererPool';
+import PlaybackNode, { NodePlaybackStatus, PlaybackNodeEvent } from './PlaybackNode';
+import RendererPool, { LeasedContentRenderer } from './renderers/RendererPool';
 import RenderHierarchy from './renderers/RenderHierarchy';
+import { ContentRenderer, RendererStatus } from './renderers/ContentRenderer';
 
-/* Events
-*   - "activePlaybackChanged": The list of active ContentBlocks changed.
-*   - "queueChanged": The queue was updated. EventData contains the new queue.
-*/
+export enum PlayerEvent { ActiveBlocksChanged, PlayQueueChanged };
 @ControlPanelListener
-export class Player extends MultiListenable<string, any> {
+export class Player extends MultiListenable<PlayerEvent, any> {
     private readonly maxPreloadedBlocks = 6; //The maximum number of blocks that will be preloaded into renderers in advance
-    private readonly playerTickRateMs = 100;
 
     private log: PrefixedLogger = new PrefixedLogger("Player");
-    private readonly playerTickInterval: NodeJS.Timeout;
     private nodeIdCounter = 0;
     private defaultBlock: ContentBlock;
     private rendererPool: RendererPool;
@@ -36,16 +31,16 @@ export class Player extends MultiListenable<string, any> {
         this.renderHierarchy = renderHierarchy;
         this.defaultBlock = defaultBlock;
 
-        //Use the default block to jump start the playback tree
-        this.jumpStartWithDefault();
-
-        //Start the player evaluation loop
-        this.playerTickInterval = setInterval(() => this.evaluatePlaybackFront(), this.playerTickRateMs);
+        //Start playback of the default block
+        let starterNode = new PlaybackNode(this.nodeIdCounter++, defaultBlock, RelativeStartType.Sequenced);
+        this.nodeTreeMap.set(starterNode.id, starterNode);
+        this.startPlayingNode(starterNode, 0);
     }
 
     shutdown() {
-        clearInterval(this.playerTickInterval);
-        this.playbackFront.forEach((node, index) => this.releasePlayingNode(index));
+        for (let i = this.playbackFront.length - 1; i > 0; i--) {
+            this.stopPlayingNode(this.playbackFront[i]);
+        }
     }
 
     /*
@@ -55,299 +50,148 @@ export class Player extends MultiListenable<string, any> {
           This is presented to the user as a queue that is obtained by traversing the first node's tree by the 0th child until the end of the tree.
     */
 
-    private playbackFront: PlaybackContentNode[] = []; //List of the 'front' of active nodes. These are the shallowest active nodes in each branch
-    private activeTracks: Map<number, ContentRenderTrack> = new Map(); //Maps a node on the playbackFront (by ID) to the track it's being played on
-    private preloadedNodes: Map<number, PooledContentRenderer> = new Map(); //Maps a queued node (by ID) to a renderer that it's been preemptively loaded into before playback
-    private nodeTreeMap: Map<number, PlaybackContentNode> = new Map(); //Maps a node (by ID) to a node in the tree
+    /**
+     * The playback front is a list of the shallowest active nodes in each branch of the playback tree.
+     * 
+     * This is the variable that would typically hold a reference to the root of the tree, but since
+     * we don't care about past nodes we only keep references to the currently active ones.
+     */
+    private playbackFront: PlaybackNode[] = [];
+    /**
+     * Maps a PlaybackNode's ID to the ContentRenderer that has been preloaded with that node.
+     */
+    private preloadedRenderers: Map<number, LeasedContentRenderer> = new Map();
+    /**
+     * Maps a PlaybackNode's ID to the actual PlaybackNode in the playback tree.
+     * 
+     * If a node has an ID that isn't in this map, it's no longer in the playback tree.
+     */
+    private nodeTreeMap: Map<number, PlaybackNode> = new Map();
+    /**
+     * Maps a PlaybackNode's ID to a the ListenerGroups holding all of its listeners.
+     * These listeners will all be cancelled when the node is removed from the tree.
+     */
+    private nodeListenersMap: Map<number, {renderer: ListenerGroup<RendererStatus, null>, node: ListenerGroup<PlaybackNodeEvent, PlaybackNode>}> = new Map();
 
-    private queuedTickActions: Map<string, (() => void)> = new Map(); //Actions queued to run at the start of the next tick
+    // -- Private playback tree control methods --
 
-    // --- Internal tree maintenance methods ---
+    /**
+     * Push a node onto the playback front, allocate a renderer to it and begin playback.
+     * @param node The node to start
+     * @param renderIndex The index the node's renderer should be inserted at (0 is the bottom)
+     */
+    private startPlayingNode(node: PlaybackNode, renderIndex: number) {
+        if (node.playbackStatus !== NodePlaybackStatus.Queued) throw Error("Tried to start a node that was not queued");
 
-    //Called every player tick, monitoring the playbackFront and maintaining the playback tree
-    private evaluatePlaybackFront() {
-        //Process any queued actions
-        this.queuedTickActions.forEach(action => action());
-        this.queuedTickActions.clear();
+        this.playbackFront.push(node);
 
-        //Check on the status of each node on the playback front
-        for (let playbackFrontIndex = this.playbackFront.length - 1; playbackFrontIndex > -1; playbackFrontIndex--) {
-            let currentNode = this.playbackFront[playbackFrontIndex];
-            if (currentNode.getPlaybackStatus() == NodePlaybackStatus.Playing) {
+        //Allocate a renderer
+        if (this.preloadedRenderers.has(node.id)) {
+            node.renderer = this.preloadedRenderers.get(node.id);
+            this.preloadedRenderers.delete(node.id);
+        } else {
+            node.renderer = this.rendererPool.getRenderer(node.block.media.location.getType());
+        }
 
-                //If the primary child has met an offset, start playing it now + add to playback front
-                //If activeNode is finished, stop and play any queued sequential ones. If the primary child hasn't started yet, let it inherit. Otherwise release resources
+        //Setup renderer/node status listeners
+        let nodeListener = node.createListenerGroup();
+        let rendererListener = node.renderer.createListenerGroup();
+        this.nodeListenersMap.set(node.id, {renderer: rendererListener, node: nodeListener});
 
-                let currentPlaybackProgressMs = Date.now() - currentNode.getPlaybackStatusTimestamp();
-                let currentPlaybackRemainingMs = currentNode.block.media.durationMs - currentPlaybackProgressMs;
+        rendererListener.on(RendererStatus.Finished, () => this.handleNodeFinished(node));
+        rendererListener.on(RendererStatus.Stalled, () => this.handleNodeStalled(node));
+        rendererListener.on(RendererStatus.Error, () => this.handleNodeError(node));
 
-                //Run through this node's children to see if any should be triggered now
-                for (let i = currentNode.pendingOffsetChildren.length - 1; i > -1; i--) {
-                    //pendingOffsetChildren contains a list of children with offsets, meaning they are set to start once the current node reaches a certain time
-                    let relChild = currentNode.pendingOffsetChildren[i];
-
-                    if (relChild.offset.type === PlaybackOffset.Type.MsAfterStart) { //The child is set to play n milliseconds into the current node
-                        if (currentPlaybackProgressMs >= relChild.offset.value) {
-                            this.log.info(`Starting ${this.nodeLogID(relChild)} ${currentPlaybackProgressMs}ms into ${this.nodeLogID(currentNode)} (${currentPlaybackProgressMs - relChild.offset.value}ms off)`);
-                            this.launchNewTracksForNodes([relChild], this.activeTracks.get(currentNode.id));
-                            currentNode.pendingOffsetChildren.splice(i, 1);
-                        }
-                    } else if (relChild.offset.type === PlaybackOffset.Type.MsBeforeEnd) { //The child is set to play n milliseconds before the current node ends
-                        if (currentPlaybackRemainingMs <= relChild.offset.value) {
-                            this.log.info(`Starting ${this.nodeLogID(relChild)} ${currentPlaybackRemainingMs}ms before the end of ${this.nodeLogID(currentNode)} (${currentPlaybackRemainingMs - relChild.offset.value}ms off)`);
-                            this.launchNewTracksForNodes([relChild], this.activeTracks.get(currentNode.id));
-                            currentNode.pendingOffsetChildren.splice(i, 1);
-                        }
-                    } else if (relChild.offset.type === PlaybackOffset.Type.Percentage) { //The child is set to play n% of the way through the current node (n is 0-1)
-                        let currentPlaybackProgressPercent = currentPlaybackRemainingMs / currentNode.block.media.durationMs;
-                        if (currentPlaybackProgressPercent >= relChild.offset.value) {
-                            this.log.info(`Starting ${this.nodeLogID(relChild)} ${currentPlaybackProgressPercent}% through ${this.nodeLogID(currentNode)} (${currentPlaybackProgressPercent - relChild.offset.value}% off)`);
-                            this.launchNewTracksForNodes([relChild], this.activeTracks.get(currentNode.id));
-                            currentNode.pendingOffsetChildren.splice(i, 1);
-                        }
-                    }
-                }
-
-                //Check if the current node has finished playback
-                if (currentPlaybackProgressMs >= currentNode.block.media.durationMs) {
-                    //The node has finished playback
-                    this.log.info(`${this.nodeLogID(currentNode)} finished playback`);                    
-                    let currentNodeTrack = this.activeTracks.get(currentNode.id);
-
-                    if (currentNode.block.transitionOutMs > 0) {
-                        //This node will now start an out transition (eg. fade out), so its track needs to keep playing for a bit.
-                        let currentNodeRenderer = currentNodeTrack.activeRenderer;
-                        currentNodeRenderer.stop(); //Starts the out transition
-                        currentNode.setPlaybackStatus(NodePlaybackStatus.TransitioningOut);
-                        this.log.info(`${this.nodeLogID(currentNode)} started transitioning out`);
-                        //While that happens, we'll start any child nodes on new tracks underneath it
-                        if (currentNode.children.length > 0) {
-                            this.launchNewTracksForNodes(currentNode.children, currentNodeTrack, false);
-                        }
-
-                        if (this.playbackFront.length == 0) {
-                            this.log.info(`Nothing queued - defaulting to "${this.defaultBlock.media.name}"`);
-                            this.jumpStartWithDefault();
-                        }
-                    } else {
-                        //No out transition. The node can be ended right away
-                        currentNode.setPlaybackStatus(NodePlaybackStatus.Finished);
-
-                        //Remove this node from the renderer hierarchy
-                        let currentRenderLayer = this.renderHierarchy.getLayerIndex(currentNodeTrack.activeRenderer);
-                        this.renderHierarchy.removeRenderer(currentNodeTrack.activeRenderer);
-                        //Stop the renderer
-                        currentNodeTrack.activeRenderer.stop();
-                        //Check if there's anything queued for playback after this node
-                        let queuedChildren = currentNode.children.filter(child => child.getPlaybackStatus() === NodePlaybackStatus.Queued);
-                        //The queued children remaining at this point should not have an offset, meaning they're meant to be played sequentially
-                        //If they do have an offset, it was invalid or something went wrong. The branch will never play, so we should close it down now
-                        for (let i = queuedChildren.length - 1; i > 0; i--) {
-                            let child = queuedChildren[i];
-                            if (child.hasOffset()) {
-                                this.log.warn(`Block "${child.block.media.name}" was queued with an offset ${child.offset.type}-${child.offset.value} that was never reached. Closing that branch...`);
-                                currentNode.removeChild(child);
-                                this.notifyNodeRemovedFromTree(child);
-                                queuedChildren.splice(i, 1);
-                            }
-                        }
-
-                        if (queuedChildren.length === 0) {
-                            this.releasePlayingNode(playbackFrontIndex);
-
-                            if (this.playbackFront.length === 0) {
-                                this.log.info(`Nothing queued - defaulting to "${this.defaultBlock.media.name}"`);
-                                this.jumpStartWithDefault();
-                            }
-                        } else {
-                            //Great! So anything queued children we're left with should start playing now
-                            //The first queued child gets to inherit the currentNode's resources
-                            let inheritingChild = queuedChildren[0];
-                            this.playbackFront[playbackFrontIndex] = inheritingChild; //Inherit playbackFront position
-                            currentNodeTrack.activeBlock = inheritingChild.block; //Inherit track
-                            //Update the track map to have firstChild as the key
-                            this.activeTracks.delete(currentNode.id);
-                            this.activeTracks.set(inheritingChild.id, currentNodeTrack);
-
-                            //Check if this node has been preloaded
-                            if (this.preloadedNodes.has(inheritingChild.id)) {
-                                //Yay, it has! Chuck the old renderer and use the preloaded one
-                                currentNodeTrack.activeRenderer.release();
-                                let preloadedRenderer = this.preloadedNodes.get(inheritingChild.id);
-                                this.preloadedNodes.delete(inheritingChild.id);
-                                currentNodeTrack.activeRenderer = preloadedRenderer;
-                            } else {
-                                //Not preloaded :(
-                                //If the old renderer supports this content type, we'll load it into that one in a sec.
-                                //Otherwise, we'll need to grab a new one
-                                if (currentNodeTrack.activeRenderer.supportedContentType !== inheritingChild.block.media.location.getType()) {
-                                    currentNodeTrack.activeRenderer.release();
-                                    currentNodeTrack.activeRenderer = this.rendererPool.getRenderer(inheritingChild.block.media.location.getType());
-                                }
-                            }
-
-                            this.startTrackPlayback(currentNodeTrack, inheritingChild, currentRenderLayer);
-                            //Try preloading descendants of this node
-                            this.preloadNodeChildren(currentNodeTrack, this.maxPreloadedBlocks);
-
-                            //Any other queued children will be started on new tracks on top of the currentNodeTrack
-                            this.launchNewTracksForNodes(queuedChildren.slice(1), currentNodeTrack, true);
-                        }
-                    }
-
-                    this.queuedTickActions.set('activePlaybackEvent', () => this.fireEvent('activePlaybackChanged', this.getPlayingBlocks()));
-                    this.queuedTickActions.set('queueChangedEvent', () => this.fireEvent('queueChanged', this.getQueue()));
-                }
-
-            } else if (currentNode.getPlaybackStatus() == NodePlaybackStatus.TransitioningIn) {
-
-                //Check if the node has finished transitioning in
-                let transitionProgressMs = Date.now() - currentNode.getPlaybackStatusTimestamp();
-                if (transitionProgressMs > currentNode.block.transitionInMs) {
-                    this.log.info(`${this.nodeLogID(currentNode)} finished transitioning in - starting playback`);
-                    //Switch to playing
-                    currentNode.setPlaybackStatus(NodePlaybackStatus.Playing);
-                }
-
-            } else if (currentNode.getPlaybackStatus() == NodePlaybackStatus.TransitioningOut) {
-
-                //Check if the node has finished transitioning out
-                let transitionProgressMs = Date.now() - currentNode.getPlaybackStatusTimestamp();
-                if (transitionProgressMs > currentNode.block.transitionOutMs + 150) { //I'm giving out transitions 150ms extra time to get off screen. It'd be cooler if the player was more accurate, but I'm not that talented
-                    //|._.| it is done.
-                    this.log.info(`${this.nodeLogID(currentNode)} finished transitioning out`);
-                    currentNode.setPlaybackStatus(NodePlaybackStatus.Finished);
-                    this.releasePlayingNode(playbackFrontIndex);
-                    if (this.playbackFront.length === 0) {
-                        this.log.info(`Nothing queued - defaulting to "${this.defaultBlock.media.name}"`);
-                        this.jumpStartWithDefault();
-                    }
-                    this.queuedTickActions.set('activePlaybackEvent', () => this.fireEvent('activePlaybackChanged', this.getPlayingBlocks()));
-                    this.queuedTickActions.set('queueChangedEvent', () => this.fireEvent('queueChanged', this.getQueue()));
-                }
-
-            } else { //activeNode isn't actually active (it's finished or queued)
-                this.log.error('A node on the playback front is in a bad state', currentNode);
-                this.shutdown();
-                //Remove that node, I guess? This really shouldn't happen
+        //Start concurrent children when their PlaybackOffset is reached
+        let createStarterForConcurrentChild = (child: PlaybackNode) => {
+            if (child.startType === RelativeStartType.Concurrent) {
+                let childStarter = rendererListener.onceProgress(child.offset, () => this.startPlayingNode(child, renderIndex + 1));
+                node.concurrentChildStartMap.set(child.id, childStarter);
             }
         }
-    }
 
-    //Starts playing a track's current playback block and adds it to the render hierarchy
-    private startTrackPlayback(track: ContentRenderTrack, playingNode: PlaybackContentNode, renderIndex: number) : void {
-        let addToHierarchyAndPlay = () => {
-            this.renderHierarchy.insertRenderer(track.activeRenderer, renderIndex);
-            track.activeRenderer.play().then(() => {
-                if (track.activeBlock.transitionInMs > 0) {
-                    playingNode.setPlaybackStatus(NodePlaybackStatus.TransitioningIn);
-                    this.log.info(`${this.nodeLogID(playingNode)} started transitioning in`);
-                } else {
-                    playingNode.setPlaybackStatus(NodePlaybackStatus.Playing);
-                    this.log.info(`${this.nodeLogID(playingNode)} started playback`);
-                }
-            });
+        let removeStarterForConcurrentChild = (child: PlaybackNode) => {
+            let starterId = node.concurrentChildStartMap.get(child.id);
+            if (starterId) {
+                rendererListener.offProgress(starterId);
+                node.concurrentChildStartMap.delete(child.id);
+            }
         }
 
-        playingNode.setPlaybackStatus(track.activeBlock.transitionInMs > 0 ? NodePlaybackStatus.TransitioningIn : NodePlaybackStatus.Playing);
-        //NOTE: We set the playback status now to prevent the player loop from jumping on this node again, but the playback status
-        //is set again in the actual addToHierarchyAndPlay promise to get a more accurate timestamp.
+        for (let child of node.children) {
+            createStarterForConcurrentChild(child);
+        }
 
-        if (track.activeRenderer.getLoadedMedia() != track.activeBlock.media) {
-            track.activeRenderer.loadMedia(track.activeBlock.media).then(addToHierarchyAndPlay);
+        nodeListener.on(PlaybackNodeEvent.ChildAdded, createStarterForConcurrentChild);
+        nodeListener.on(PlaybackNodeEvent.ChildRemoved, removeStarterForConcurrentChild);
+        
+        //Insert into render hierarchy and begin playback
+        let addToHierarchyAndPlay = () => {
+            this.renderHierarchy.insertRenderer(node.renderer, renderIndex);
+
+            rendererListener.onceWithTimeout(RendererStatus.Playing, () => {
+                if (node.block.transitionInMs > 0) {
+                    node.setPlaybackStatus(NodePlaybackStatus.TransitioningIn);
+                    rendererListener.onceProgress(new PlaybackOffset(PlaybackOffset.Type.MsAfterStart, node.block.transitionInMs), () => node.setPlaybackStatus(NodePlaybackStatus.Playing));
+                } else {
+                    node.setPlaybackStatus(NodePlaybackStatus.Playing);
+                }
+            },
+            3000, () => {
+                this.log.warn(`${this.nodeLogID(node)} is taking a long time to start playing`);
+            });
+            node.renderer.play();
+        }
+
+        if (node.renderer.getLoadedMedia() !== node.block.media) {
+            //The renderer has to load the media first. Usually this would've happened earlier through preloading, but not always.
+            rendererListener.onceWithTimeout(RendererStatus.Ready, addToHierarchyAndPlay, 5000, () => this.log.warn(`${this.nodeLogID(node)} is taking a long time to load`));
+            node.renderer.loadMedia(node.block.media);
         } else {
             addToHierarchyAndPlay();
         }
+
+        this.fireEvent(PlayerEvent.ActiveBlocksChanged, this.getPlayingBlocks())
     }
 
-    //Create a new track for a list of nodes and start playback for each
-    private launchNewTracksForNodes(nodes: PlaybackContentNode[], relativeToTrack?: ContentRenderTrack, insertAbove = true) {
-        nodes.forEach(node => {
-            //Push onto the playback front
-            this.playbackFront.push(node);
-            //Push a new track onto the activeTracks stack (creating a new 'layer', if you like)
-            let newTrack = new ContentRenderTrack();
-            newTrack.activeBlock = node.block;
-            newTrack.activeRenderer = this.rendererPool.getRenderer(node.block.media.location.getType());
-            this.activeTracks.set(node.id, newTrack);
+    /**
+     * Immediately stop playback of a node, remove it from the playback front and release its renderer.
+     * @param PlaybackNode The node on the playback front to stop
+     */
+    private stopPlayingNode(node: PlaybackNode) {
+        let frontIndex = this.playbackFront.indexOf(node);
+        if (!frontIndex) return; //Either index is incorrect or this node has already finished playing
 
-            //Find the index this track should be inserted at
-            let targetIndex = 0;
-            if (relativeToTrack) {
-                let relativeTrackIndex = this.renderHierarchy.getLayerIndex(relativeToTrack.activeRenderer);
-                targetIndex = insertAbove ? relativeTrackIndex + 1 : relativeTrackIndex;
-            }
+        node.renderer.stopAndUnload();
+        this.playbackFront.splice(frontIndex, 1);
+        this.renderHierarchy.removeRenderer(node.renderer);
+        node.renderer.release();
 
-            //Start 'er up
-            this.startTrackPlayback(newTrack, node, targetIndex);
-            this.preloadNodeChildren(newTrack, this.maxPreloadedBlocks);
-        });
-    } 
-
-    //Attempt to preload a number of blocks onto a track <- NOT HOW WE DO IT ANYMORE
-    private preloadNodeChildren(track: ContentRenderTrack, maxPreloads: number) {
-        //TODO: Preloading. Remember that nodes
-        this.log.warn('Track preloading not yet implemented');
+        this.cleanupRemovedNode(node);
+        this.fireEvent(PlayerEvent.ActiveBlocksChanged, this.getPlayingBlocks())
     }
-
-    //Insert the default block to the front of the primary queue. Used when nothing else is playing
-    private jumpStartWithDefault() {
-        let starterNode = new PlaybackContentNode(this.defaultBlock, this.nodeIdCounter++);
-        this.nodeTreeMap.set(starterNode.id, starterNode);
-        this.launchNewTracksForNodes([ starterNode ]);
-    }
-
-    //Stop the node on the a branch and release all resources
-    private releasePlayingNode(playbackFrontIndex: number) {
-        let node = this.playbackFront[playbackFrontIndex];
-        if (!node) return; //Either index is incorrect or this node has already finished playing
-        let track = this.activeTracks.get(node.id);
-        //Remove from playback front, active tracks and release renderer
-        this.playbackFront.splice(playbackFrontIndex, 1);
-        this.activeTracks.delete(node.id);
-        this.renderHierarchy.removeRenderer(track.activeRenderer);
-        track.activeRenderer.release();
-        if (node.children.length === 0) {
-            //This branch has no more descendants and can be culled
-            this.cullBackToBranch(node);
-        }
-    }
-
-    //Walk backwards up a path of single-children nodes, culling them until a branch (node with multiple children) is reached.
-    //Returns the branch node at the top of the path or null if the entire tree is a single-child path.
-    private cullBackToBranch(pathEndNode: PlaybackContentNode) : PlaybackContentNode | null {
-        let node = pathEndNode;
-        while (node.parentNode != null) {
-            let parent = node.parentNode;
-            if (parent.children.length == 1) {
-                //Parent is a single-child node, the path continues upwards
-                this.notifyNodeRemovedFromTree(parent.children[0]);
-                parent.children = [];
-                node = parent;
-            } else {
-                //Parent is a branch node with multiple children - the path ends here
-                //Remove the current node (part of the single-child path) from the parent
-                parent.removeChild(node);
-                this.notifyNodeRemovedFromTree(node);
-                //Return the parent node
-                return parent;
-            }
-        }
-
-        //No branching parent could be found; the whole tree is single-child
-        return null;
-    }
-
-    //Recursively cleanup any external references when a node is removed from the player tree
-    private notifyNodeRemovedFromTree(removedNode: PlaybackContentNode) {
+    
+    /**
+     * Cleans up any references to a node that was previously in the tree.
+     * 
+     * Call this function after you remove a node from the tree.
+     */
+    private cleanupRemovedNode(removedNode: PlaybackNode) {
         this.log.info(`${this.nodeLogID(removedNode)} was removed from tree`);
         //Remove the node from the tree map
         this.nodeTreeMap.delete(removedNode.id);
+        //Cancel any listeners registered for this node
+        let listenerGroups = this.nodeListenersMap.get(removedNode.id);
+        if (listenerGroups) {
+            listenerGroups.node.cancelAll();
+            //listenerGroups.renderer.cancelAll(); -- Called when the renderer is returned
+            this.nodeListenersMap.delete(removedNode.id);
+        }
         //Unload any media this node may have preloaded
-        if (this.preloadedNodes.has(removedNode.id)) {
-            let loadedRenderer = this.preloadedNodes.get(removedNode.id);
+        if (this.preloadedRenderers.has(removedNode.id)) {
+            let loadedRenderer = this.preloadedRenderers.get(removedNode.id);
             loadedRenderer.release();
-            this.preloadedNodes.delete(removedNode.id);
+            this.preloadedRenderers.delete(removedNode.id);
         }
         //TempNode cleanup
         if (this.tempNodes.has(removedNode.id)) {
@@ -355,47 +199,71 @@ export class Player extends MultiListenable<string, any> {
             this.tempNodes.delete(removedNode.id);
             this.tempNodeProvidedByMap.delete(removedNode.id);
         }
-
-        removedNode.children.forEach(this.notifyNodeRemovedFromTree, this);// <- This is causing a problem. Someone is calling this function with valid children still attached, I guess? Or maybe the playback front idk
     }
 
-    //Remove a node from the tree and attach its primary child to its parent. Like an array splice but only for the primary child.
-    private primarySpliceNodeOut(targetNode: PlaybackContentNode) {
-        //Remove [targetNode] from [A] -> [targetNode] -> [B]
-        let targetNodeParent = targetNode.parentNode;
-        targetNode.parentNode.removeChild(targetNode); // [A]
-        if (targetNode.children.length > 0) {
-            let primaryChild = targetNode.children[0]; // [targetNode] -> [B]
-            targetNode.removeChild(primaryChild); // [targetNode]
-            targetNodeParent.insertChild(primaryChild, 0); // [A] -> [B]
+    /**
+     * Load the media for this node into a ContentRenderer ahead of time, so that it'll be
+     * hot and ready later.
+     * @param node The node to preload
+     * @param recursivelyLoadChildren Also preload the descendants of this node (default true)
+     */
+    private preload(node: PlaybackNode, recursivelyLoadChildren = true) {
+        //TODO: Preloading
+        this.log.warn('Track preloading not yet implemented');
+    }
+
+    // -- Node status handlers --
+    private handleNodeFinished(node: PlaybackNode) : void {
+        this.log.info(`${this.nodeLogID(node)} finished playback`);
+        let nodeRenderIndex = this.renderHierarchy.getLayerIndex(node.renderer);
+
+        //Find the children of this node that are queued to start after it
+        let queuedChildren = node.children.filter(c => c.playbackStatus === NodePlaybackStatus.Queued);
+        for (let i = queuedChildren.length - 1; i > -1; i--) {
+            let child = queuedChildren[i];
+            if (child.startType === RelativeStartType.Concurrent) {
+                this.log.warn(`${this.nodeLogID(child)} was queued with an offset ${child.offset.type}-${child.offset.value} that was never reached`);
+                queuedChildren.pop();
+                node.removeChild(child);
+            }
         }
-    }
-    
-    //Insert a node into the tree between a parent node and its primary child
-    private primarySpliceNodeIn(parentNode: PlaybackContentNode, inNode: PlaybackContentNode) {
-        if (parentNode.children.length === 0) {
-            parentNode.addChild(inNode);
-            return;
+
+        if (node.block.transitionOutMs <= 0) {
+            //This node has no out transition - stop it now
+            this.stopPlayingNode(node);
+            node.setPlaybackStatus(NodePlaybackStatus.Finished);
+        } else {
+            //Start the node's out transition
+            node.setPlaybackStatus(NodePlaybackStatus.TransitioningOut);
+            let listeners = this.nodeListenersMap.get(node.id);
+
+            let stop = () => { 
+                this.stopPlayingNode(node);
+                node.setPlaybackStatus(NodePlaybackStatus.Finished);
+            };
+
+            listeners.renderer.onceWithTimeout(RendererStatus.Idle, stop, 
+                node.block.transitionOutMs + 1000, 
+                () => {
+                        this.log.warn(`The out transition for ${this.nodeLogID(node)} hasn't completed in time. Stopping the node now.`);
+                        stop();
+                    }
+            );
+            node.renderer.stopAndUnload();
         }
 
-        // Adding [inNode] between [A] -> [B]
-        let oldPrimaryChild = parentNode.children[0]; // [A] -> [B]
-        parentNode.removeChild(oldPrimaryChild); // [A]
-        parentNode.insertChild(inNode, 0); // [A] -> [inNode]
-        inNode.insertChild(oldPrimaryChild, 0); // [A] -> [inNode] -> [B]
-    }
-    
-    private destructiveCollapseTree(rootNode: PlaybackContentNode) {
-        //TODO: Collapse old nodes when the tree reaches a certain size
-        //After this operation, the tree remains traversable but not historically accurate
+        queuedChildren.forEach((child) => this.startPlayingNode(child, nodeRenderIndex));
     }
 
-    // ------
-    // --- User-facing queue accessors ---
-    /*  
-        Users only have direct access to the active nodes on the lowest level of the playback front, presented to them as the "Queue" in the UI. 
-        Accessors outside this section are intended for internal use by other application components or plugins.
-    */
+    private handleNodeStalled(node: PlaybackNode) : void {
+        this.log.info(`${this.nodeLogID(node)} is stalled`);
+    }
+
+    private handleNodeError(node: PlaybackNode) : void {
+        this.log.warn(`${this.nodeLogID(node)} encountered an error`);
+    }
+
+    // -- Public player tree modifiers --
 
     /**
      * Add a ContentBlock to be played sequentially at the end of the player queue.
@@ -404,17 +272,45 @@ export class Player extends MultiListenable<string, any> {
      */
     public enqueueBlock(block: ContentBlock) : number {
         //Find the end of the primary path
-        let node = this.playbackFront[0];
-        while (node.children.length > 0) {
-            node = node.children[0];
+        let queueEndNode = this.playbackFront[0];
+        while (queueEndNode.children.length > 0) {
+            queueEndNode = queueEndNode.children[0];
         }
         //Add this block to it
-        let newNode = new PlaybackContentNode(block, this.nodeIdCounter++);
-        node.addChild(newNode);
+        let newNode = new PlaybackNode(this.nodeIdCounter++, block, RelativeStartType.Sequenced);
+        queueEndNode.addChild(newNode);
         this.nodeTreeMap.set(newNode.id, newNode);
+        this.preload(newNode);
         this.reevaluateTempNodes();
-        this.fireEvent('queueChanged', this.getQueue());
+        this.fireEvent(PlayerEvent.PlayQueueChanged, this.getQueue());
         return newNode.id;
+    }
+
+    /**
+     * Enqueue a block to start playing before, after or during a block already in the tree.
+     * @param block The block to enqueue
+     * @param relativeTarget Enqueue the new block relative to this one
+     * @param startType Should the new block start playing after or during the target block
+     * @param offset (Optional) Describes when the new block should start playing relative to the target. Defaults to playing sequentially, at the end of the target block
+     */
+    public enqueueBlockRelative(block: ContentBlock, relativeTarget: EnqueuedContentBlock, startType: RelativeStartType, offset?: PlaybackOffset) : EnqueuedContentBlock {
+        let createdNode = new PlaybackNode(this.nodeIdCounter++, block, startType, offset);
+        let targetNode = this.nodeTreeMap.get(relativeTarget.queueId);
+
+        if (targetNode == null) {
+            return null;
+        }
+
+        if (startType === RelativeStartType.Sequenced) {
+            this.primarySpliceNodeIn(targetNode, createdNode);
+        } else if (startType === RelativeStartType.Concurrent) {
+            targetNode.addChild(createdNode);
+        }
+
+        this.nodeTreeMap.set(createdNode.id, createdNode);
+        this.preload(createdNode);
+        this.fireEvent(PlayerEvent.PlayQueueChanged, this.getQueue());
+        return new EnqueuedContentBlock(createdNode);
     }
 
     /**
@@ -426,16 +322,16 @@ export class Player extends MultiListenable<string, any> {
         let targetNode = this.nodeTreeMap.get(queuedNodeId);
         if (!targetNode) return;
 
-        if (targetNode.getPlaybackStatus() !== NodePlaybackStatus.Queued) {
+        if (targetNode.playbackStatus !== NodePlaybackStatus.Queued) {
             return; //Cannot remove a node that's currently playing (the UI shouldn't allow this anyway)
         }
 
         //Splice this node out of the queue
         this.primarySpliceNodeOut(targetNode);
-        this.notifyNodeRemovedFromTree(targetNode);
+        this.cleanupRemovedNode(targetNode);
 
         this.reevaluateTempNodes();
-        this.fireEvent('queueChanged', this.getQueue());
+        this.fireEvent(PlayerEvent.PlayQueueChanged, this.getQueue());
     }
 
     /**
@@ -447,17 +343,18 @@ export class Player extends MultiListenable<string, any> {
      */
     public updateQueuedNode(queuedNodeId: number, newBlock: ContentBlock) : boolean {
         let targetNode = this.nodeTreeMap.get(queuedNodeId);
-        if (!targetNode || targetNode.getPlaybackStatus() !== NodePlaybackStatus.Queued) return false;
+        if (!targetNode || targetNode.playbackStatus !== NodePlaybackStatus.Queued) return false;
 
-        //Unload if preloaded anywhere
-        if (this.preloadedNodes.has(targetNode.id)) {
-            let preloadedRenderer = this.preloadedNodes.get(targetNode.id);
+        //Unload if preloaded
+        if (this.preloadedRenderers.has(targetNode.id)) {
+            let preloadedRenderer = this.preloadedRenderers.get(targetNode.id);
             preloadedRenderer.release();
-            this.preloadedNodes.delete(targetNode.id);
+            this.preloadedRenderers.delete(targetNode.id);
         }
 
         targetNode.block = newBlock;
-        this.fireEvent('queueChanged', this.getQueue());
+        this.preload(targetNode);
+        this.fireEvent(PlayerEvent.PlayQueueChanged, this.getQueue());
         return true;
     }
 
@@ -471,22 +368,22 @@ export class Player extends MultiListenable<string, any> {
     public reorderQueuedNode(sourceQueuedId: number, destinationQueuedId: number, placeBefore: boolean) : boolean {
         let nodeToMove = this.nodeTreeMap.get(sourceQueuedId);
         let targetNode = this.nodeTreeMap.get(destinationQueuedId);
-        if (!nodeToMove || !targetNode || !nodeToMove.parentNode) return false;
-        if (nodeToMove.getPlaybackStatus() === NodePlaybackStatus.Playing) return false;
+        if (!nodeToMove || !targetNode || !nodeToMove.parent) return false;
+        if (nodeToMove.playbackStatus === NodePlaybackStatus.Playing) return false;
 
         //Splice nodeToMove out of the queue -- [A] -> [B] -> [C]
         this.primarySpliceNodeOut(nodeToMove);
 
         if (placeBefore) {
             //Splice nodeToMove into the queue between targetNode and targetNode's parent
-            this.primarySpliceNodeIn(targetNode.parentNode, nodeToMove);
+            this.primarySpliceNodeIn(targetNode.parent, nodeToMove);
         } else {
             //Splice nodeToMove into the queue between targetNode and targetNode's first child
             this.primarySpliceNodeIn(targetNode, nodeToMove);
         }
 
         this.reevaluateTempNodes();
-        this.fireEvent('queueChanged', this.getQueue());
+        this.fireEvent(PlayerEvent.PlayQueueChanged, this.getQueue());
         return true;
     }
 
@@ -497,7 +394,7 @@ export class Player extends MultiListenable<string, any> {
 
         if (queueStart == null) return queue;
 
-        if (queueStart.getPlaybackStatus() != NodePlaybackStatus.Queued) {
+        if (queueStart.playbackStatus != NodePlaybackStatus.Queued) {
             //The node is currently playing and therefore shouldn't be part of the queue
             if (queueStart.children.length > 0) {
                 //Start the queue from the next node
@@ -518,8 +415,67 @@ export class Player extends MultiListenable<string, any> {
         return queue;
     }
 
-    // ------
-    // --- TempNodeProvider handling ---
+    // -- Queue modification helpers --
+
+    //Walk backwards up a path of single-children nodes, culling them until a branch (node with multiple children) is reached.
+    //Returns the branch node at the top of the path or null if the entire tree is a single-child path.
+    private cullBackToBranch(pathEndNode: PlaybackNode) : PlaybackNode | null {
+        let node = pathEndNode;
+        while (node.parent != null) {
+            let parent = node.parent;
+            if (parent.children.length == 1) {
+                //Parent is a single-child node, the path continues upwards
+                this.cleanupRemovedNode(parent.children[0]);
+                parent.removeChildAtIndex(0);
+                node = parent;
+            } else {
+                //Parent is a branch node with multiple children - the path ends here
+                //Remove the current node (part of the single-child path) from the parent
+                parent.removeChild(node);
+                this.cleanupRemovedNode(node);
+                //Return the parent node
+                return parent;
+            }
+        }
+
+        //No branching parent could be found; the whole tree is single-child
+        return null;
+    }
+
+    /**
+     * Remove a node from the tree and attach its primary child to its parent. Like an array splice but only for the primary child.
+     * @param targetNode The node to remove from the tree
+     */
+    private primarySpliceNodeOut(targetNode: PlaybackNode) {
+        //Remove [targetNode] from [A] -> [targetNode] -> [B]
+        let targetNodeParent = targetNode.parent;
+        targetNode.parent.removeChild(targetNode); // [A]
+        if (targetNode.children.length > 0) {
+            let primaryChild = targetNode.children[0]; // [targetNode] -> [B]
+            targetNode.removeChild(primaryChild); // [targetNode]
+            targetNodeParent.insertChild(primaryChild, 0); // [A] -> [B]
+        }
+    }
+    
+    /**
+     * Insert a node into the tree between a parent node and its primary child.
+     * @param parentNode The parent node already in the tree
+     * @param inNode The node to add to the tree
+     */
+    private primarySpliceNodeIn(parentNode: PlaybackNode, inNode: PlaybackNode) {
+        if (parentNode.children.length === 0) {
+            parentNode.addChild(inNode);
+            return;
+        }
+
+        // Adding [inNode] between [A] -> [B]
+        let oldPrimaryChild = parentNode.children[0]; // [A] -> [B]
+        parentNode.removeChild(oldPrimaryChild); // [A]
+        parentNode.insertChild(inNode, 0); // [A] -> [inNode]
+        inNode.insertChild(oldPrimaryChild, 0); // [A] -> [inNode] -> [B]
+    }
+
+    // -- TempNodeProvider handling --
     /*
         TempNodeProviders are functions that accept the player queue and return a list of 'temperamental' nodes to be inserted.
         The primary use of TempNodeProviders is in user-defined rules that enqueue certain ContentBlocks every time 
@@ -529,9 +485,9 @@ export class Player extends MultiListenable<string, any> {
         a ContentBlock would require the "every 3rd block" rule to be reevaluated.
     */
 
-    private tempNodes: Map<number, PlaybackContentNode> = new Map(); //Maps node ID to a TempNode somewhere in the tree. Can be used to test if a node is temperamental
+    private tempNodes: Map<number, PlaybackNode> = new Map(); //Maps node ID to a TempNode somewhere in the tree. Can be used to test if a node is temperamental
     private tempNodeProvidedByMap: Map<number, number> = new Map(); //Maps a TempNode's ID to the ID of the TempNodeProvider it came from
-    private tempNodeProviderChildMap: Map<number, Map<number, PlaybackContentNode>> = new Map(); //Maps TempNodeProvider ID to a map of all the TempNodes it's responsible for
+    private tempNodeProviderChildMap: Map<number, Map<number, PlaybackNode>> = new Map(); //Maps TempNodeProvider ID to a map of all the TempNodes it's responsible for
     private tempNodeProviders: Map<number, TempNodeProvider> = new Map();
     private tempNodeProviderIdCounter = 0;
     
@@ -568,14 +524,14 @@ export class Player extends MultiListenable<string, any> {
     private clearFromTempProvider(providerId: number) {
         for (let tempNode of this.tempNodeProviderChildMap.get(providerId).values()) {
             //Remove tempNode from the tree
-            if (tempNode.parentNode.children.indexOf(tempNode) === 0) {
+            if (tempNode.parent.children.indexOf(tempNode) === 0) {
                 //This is a primary node in the queue, so splice it out
                 this.primarySpliceNodeOut(tempNode)
             } else {
                 //This is a secondary node springing off from the queue, so just cut it from the tree
-                tempNode.parentNode.removeChild(tempNode);
+                tempNode.parent.removeChild(tempNode);
             }
-            this.notifyNodeRemovedFromTree(tempNode);
+            this.cleanupRemovedNode(tempNode);
         }
     }
 
@@ -605,32 +561,6 @@ export class Player extends MultiListenable<string, any> {
         this.tempNodeProviderChildMap.delete(providerId);
     }
     // ------
-
-    /**
-     * Enqueue a block to start playing before, after or during a block already in the tree.
-     * @param block The block to enqueue
-     * @param relativeTarget Enqueue the new block relative to this one
-     * @param startRelationship Should the new block start playing after or during the target block
-     * @param offset (Optional) Describes when the new block should start playing relative to the target. Defaults to playing sequentially, at the end of the target block
-     */
-    public enqueueBlockRelative(block: ContentBlock, relativeTarget: EnqueuedContentBlock, startRelationship: PlaybackStartRelationship, offset?: PlaybackOffset) : EnqueuedContentBlock {
-        let createdNode = new PlaybackContentNode(block, this.nodeIdCounter++, offset);
-        let targetNode = this.nodeTreeMap.get(relativeTarget.queueId);
-
-        if (targetNode == null) {
-            return null;
-        }
-
-        if (startRelationship === PlaybackStartRelationship.Sequenced) {
-            this.primarySpliceNodeIn(targetNode, createdNode);
-        } else if (startRelationship === PlaybackStartRelationship.Concurrent) {
-            targetNode.addChild(createdNode);
-        }
-
-        this.nodeTreeMap.set(createdNode.id, createdNode);
-        return new EnqueuedContentBlock(createdNode);
-    }
-
     /**
      * Register a listener that is triggered whenever a playing block reaches a certain progress.
      * Only triggers for blocks on the primary queue.
@@ -664,17 +594,18 @@ export class Player extends MultiListenable<string, any> {
      */
     getPlayingBlocks() : ContentBlockWithProgress[] {
         let activeBlocks: ContentBlockWithProgress[] = [];
+
+        this.playbackFront.forEach((node) => {
+            activeBlocks[this.renderHierarchy.getLayerIndex(node.renderer)] = new ContentBlockWithProgress(node, Date.now() - node.playbackStatusTimestamp);
+        })
         
-        this.activeTracks.forEach((track, nodeId) => {
-            activeBlocks[this.renderHierarchy.getLayerIndex(track.activeRenderer)] = new ContentBlockWithProgress(this.nodeTreeMap.get(nodeId), Date.now() - this.nodeTreeMap.get(nodeId).getPlaybackStatusTimestamp());
-        });
         return activeBlocks;
     }
 
     /**
      * Pretty-print a node for logging.
      */
-    private nodeLogID(node: PlaybackContentNode) : string {
+    private nodeLogID(node: PlaybackNode) : string {
         return `${node.id}-${node.block.id}(${node.block.media.name})`;
     }
 
@@ -682,12 +613,12 @@ export class Player extends MultiListenable<string, any> {
 
     @ControlPanelRequest('getPlayingBlocks')
     private getPlayingRequest() : WSConnection.WSPendingResponse {
-        return new WSConnection.SuccessResponse('PlayingBlocks', this.getPlayingBlocks()); //TODO: Update ContentBlocksWithProgress to include the node's playback status - the client side should be able to display this
+        return new WSConnection.SuccessResponse(this.getPlayingBlocks()); //TODO: Update ContentBlocksWithProgress to include the node's playback status - the client side should be able to display this
     }
 
     @ControlPanelRequest('getQueue')
     private getQueueRequest() : WSConnection.WSPendingResponse {
-        return new WSConnection.SuccessResponse('Queue', this.getQueue());
+        return new WSConnection.SuccessResponse(this.getQueue());
     }
 
     @ControlPanelRequest('skipForward')
@@ -696,11 +627,10 @@ export class Player extends MultiListenable<string, any> {
             return new WSConnection.ErrorResponse('QueueEmpty', 'Nothing to skip to - the queue is empty');
         }
 
-        //Reset the current node's playbackStatusTimestamp so that playback is finished
         let currentNode = this.playbackFront[0];
         this.log.info(`Skipping node ${this.nodeLogID(currentNode)}`);
-        currentNode.playbackStatusTimestamp = -Number.POSITIVE_INFINITY; //Tricks the currentNode to end on the next tick
-        return new WSConnection.SuccessResponse('SkipQueued');
+        this.handleNodeFinished(currentNode); //Fire the finished handler for this node right now
+        return new WSConnection.SuccessResponse("Skipped");
     }
 
     @ControlPanelRequest('stopToTitle')
@@ -710,40 +640,43 @@ export class Player extends MultiListenable<string, any> {
         if (primaryNode.block.id == this.defaultBlock.id) {
             return new WSConnection.ErrorResponse('AlreadyStopped', 'The default title block is already playing');
         }
-
         this.log.info('Stopping to default block');
+
         //Stop playback of all branches except the primary one
         for (let i = this.playbackFront.length - 1; i > 0; i--) {
-            this.releasePlayingNode(i);
+            this.stopPlayingNode(this.playbackFront[i]);
         }
 
-        let defaultNode = new PlaybackContentNode(this.defaultBlock, this.nodeIdCounter++);
+        //Set up a default node with the existing play queue attached to it
+        let defaultNode = new PlaybackNode(this.nodeIdCounter++, this.defaultBlock, RelativeStartType.Sequenced);
         this.nodeTreeMap.set(defaultNode.id, defaultNode);
 
         if (primaryNode.children.length > 0) {
             //Pull the current queue off the primary node
-            let primaryPathHead = primaryNode.children[0];
-            //Remove all children from the node
-            primaryNode.children = [];
+            let nextInPrimaryQueue = primaryNode.children[0];
+            //Remove all children from the primary node
+            for (let i = primaryNode.children.length - 1; i > 0; i--) {
+                primaryNode.removeChildAtIndex(i);
+            }
 
             //Patch the queue on to the end of the default node
-            defaultNode.addChild(primaryPathHead);
+            defaultNode.addChild(nextInPrimaryQueue);
         }
 
-        //Create a new track for the default block to live on
-        this.launchNewTracksForNodes([defaultNode], this.activeTracks.get(primaryNode.id), true);
+        this.startPlayingNode(defaultNode, 0);
 
         if (defaultNode.block.transitionInMs > 0) {
-            //The default block has an in transition, ensure the underlying track stays alive until it's completed
-            //We can accomplish this by setting the primary node to the TransitioningOut state with an out duration equal to the default block's in duration
-            primaryNode.block.transitionOutMs = defaultNode.block.transitionInMs;
-            primaryNode.setPlaybackStatus(NodePlaybackStatus.TransitioningOut);
-        } else {
-            //No transition, end the old track immediately
-            this.releasePlayingNode(0);
+            /*
+             The default block has an in transition (eg. 1s fade).
+             We will set the out transition time of the primaryNode to match
+             this, so that it will keep playing until the default block's transition is finished.
+            */
+           primaryNode.block.transitionOutMs = defaultNode.block.transitionInMs;
         }
 
-        this.queuedTickActions.set('activePlaybackEvent', () => this.fireEvent('activePlaybackChanged', this.getPlayingBlocks()));
+        this.handleNodeFinished(primaryNode);
+
+        this.fireEvent(PlayerEvent.ActiveBlocksChanged, this.getPlayingBlocks())
 
         return new WSConnection.SuccessResponse('Stopped');
     }
@@ -752,15 +685,13 @@ export class Player extends MultiListenable<string, any> {
     private restartPlaybackRequest() : WSConnection.WSPendingResponse {
         //Restart the current primary node
         let currentNode = this.playbackFront[0];
-        let renderer = this.activeTracks.get(currentNode.id).activeRenderer;
+        let nListener = this.nodeListenersMap.get(currentNode.id);
+
         this.log.info('Restarting current block')
-        return new Promise((resolve, reject) => {
-            renderer.restartMedia().then(() => {
-                currentNode.setPlaybackStatus(NodePlaybackStatus.Playing);
-                resolve(new WSConnection.SuccessResponse('Restarted'));
-                this.fireEvent('activePlaybackChanged', this.getPlayingBlocks());
-            }).catch(err => reject(new WSConnection.ErrorResponse('Generic', err)));
-        });
+        currentNode.renderer.restart();
+        this.fireEvent(PlayerEvent.ActiveBlocksChanged, this.getPlayingBlocks());
+
+        return new WSConnection.SuccessResponse('Restarted');
     }
 
     @ControlPanelRequest('queueChange', QueueChange.isInstance)
@@ -864,24 +795,60 @@ export class Player extends MultiListenable<string, any> {
 }
 }
 
+/**
+ * A point in time during the playback of some media.
+ */
+export class PlaybackOffset {
+    constructor(
+        readonly type: PlaybackOffset.Type,
+        readonly value: number
+    ) {
+        if (type === PlaybackOffset.Type.Percentage && (value < 0 || value > 1)) throw new RangeError("Percentage offsets must be between 0 and 1");
+    };
+
+    public evaluate(durationMs: number) {
+        if (this.type === PlaybackOffset.Type.MsAfterStart) {
+            return this.value;
+        } else if (this.type === PlaybackOffset.Type.MsBeforeEnd) {
+            return durationMs - this.value;
+        } else if (this.type === PlaybackOffset.Type.Percentage) {
+            return durationMs * (this.value / 100);
+        } else {
+            throw new Error("Unsupported PlaybackOffset type");
+        }
+    }
+}
+
+export namespace PlaybackOffset {
+    export enum Type { MsAfterStart = 'After start', MsBeforeEnd = 'Before end', Percentage = 'Percentage' }
+}
+
 //Accepts the current queue of blocks and returns a list of blocks to add
 export type TempNodeProvider = (queue: EnqueuedContentBlock[]) => {
     block: ContentBlock; 
     relativeTarget: EnqueuedContentBlock;
-    startRelationship: PlaybackStartRelationship;
+    startRelationship: RelativeStartType;
     offset?: PlaybackOffset;
 }[];
 
-export enum PlaybackStartRelationship {
-    //Specifies how a block should play relative to the block before it
-    Sequenced, //The blocks should play one after the other (optionally with a little bit of overlap for transitions)
-    Concurrent //The blocks should play at the same time
+/**
+ * Specifies how a child block should play relative to its parent block.
+ */
+export enum RelativeStartType {
+    /**
+     * The child should play after the parent.
+     */
+    Sequenced,
+    /**
+     * The child should play at some point during the parent's playback.
+     */
+    Concurrent,
 }
 
 //A ContentBlock linked to a node in the PlaybackTree (by node id). Allows users to enqueue a block relative to an existing one
 export class EnqueuedContentBlock extends ContentBlock {
     readonly queueId: number;
-    constructor(node: PlaybackContentNode) {
+    constructor(node: PlaybackNode) {
         super(node.block.media, node.block.id);
         ContentBlock.clone(node.block, this);
         this.queueId = node.id;
@@ -896,7 +863,7 @@ export class EnqueuedContentBlock extends ContentBlock {
 
 class ContentBlockWithProgress extends EnqueuedContentBlock {
     readonly progressMs: number;
-    constructor(node: PlaybackContentNode, playbackProgressMs: number) {
+    constructor(node: PlaybackNode, playbackProgressMs: number) {
         super(node);
         this.progressMs = playbackProgressMs;
     }

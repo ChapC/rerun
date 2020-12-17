@@ -1,10 +1,10 @@
 import { ContentSource } from './ContentSource';
 import { SingleListenable } from '../helpers/SingleListenable';
-import { Player } from '../playback/Player'; 
+import { Player, PlayerEvent } from '../playback/Player'; 
 import { IJSONSavable, JSONSavable } from '../persistence/JSONSavable';
 import { LocalDirectorySource } from './LocalDirectorySource';
-import ControlPanelHandler, { ControlPanelListener, ControlPanelRequest } from '../ControlPanelHandler';
-import { WSConnection } from '../helpers/WebsocketConnection';
+import ControlPanelHandler, { ControlPanelListener, ControlPanelRequest } from '../networking/ControlPanelHandler';
+import { WSConnection } from '../networking/WebsocketConnection';
 
 const uuidv4 = require('uuid/v4');
 
@@ -13,7 +13,10 @@ const uuidv4 = require('uuid/v4');
 export class ContentSourceManager extends SingleListenable<ContentSource[]> implements IJSONSavable {
     constructor(public savePath: string, private player : Player) {
         super();
-        player.on('queueChange', (newQueue) => this.onQueueChanged());
+        player.on(PlayerEvent.PlayQueueChanged, (newQueue) => this.onQueueChanged());
+
+        ControlPanelHandler.getInstance().publish(this.AutoPoolOptionsChannel, this.autoPoolOptions);
+        ControlPanelHandler.getInstance().publish(this.AutoPoolListChannel, this.getAutoSourcePool());
     };
 
     private loadedSources : {[id: string] : ContentSource} = {};
@@ -115,6 +118,9 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
         }
     }
 
+    private readonly AutoPoolOptionsChannel = 'cs-options';
+    private readonly AutoPoolListChannel = 'cs-list';
+
     setAutoPoolOptions(newOptions: ContentSourceManager.AutoPoolOptions) {
         if (!this.autoPoolOptions.enabled && newOptions.enabled) {
             //Switched auto pool on
@@ -122,7 +128,7 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
         }
         this.autoPoolOptions = newOptions;
         JSONSavable.serializeJSON(this, this.savePath);
-        ControlPanelHandler.getInstance().sendAlert('setAutoPoolOptions', newOptions);
+        ControlPanelHandler.getInstance().publish(this.AutoPoolOptionsChannel, newOptions);
     }
 
     getAutoPoolOptions() {
@@ -132,7 +138,7 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
     setUseSourceForAuto(sourceId: string, useSource: boolean) {
         this.autoEnabledSources[sourceId] = useSource;
         JSONSavable.serializeJSON(this, this.savePath);
-        ControlPanelHandler.getInstance().sendAlert('setAutoPoolList', this.getAutoSourcePool());
+        ControlPanelHandler.getInstance().publish(this.AutoPoolListChannel, this.getAutoSourcePool());
     }
 
     //Return all sources that are enabled in the auto pool
@@ -259,12 +265,12 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
 
     @ControlPanelRequest('getContentSources')
     private getContentSourcesRequest() {
-        return new WSConnection.SuccessResponse('Sources', this.getSources());
+        return new WSConnection.SuccessResponse(this.getSources());
     }
 
     @ControlPanelRequest('getAutoPool')
     private getAutoPoolRequest() {
-        return new WSConnection.SuccessResponse('AutoPool', {
+        return new WSConnection.SuccessResponse({
             pool: this.getAutoSourcePool(),
             options: this.getAutoPoolOptions()
         });

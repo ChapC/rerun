@@ -1,4 +1,6 @@
 {
+  "include": ["src", "obs"],
+  "exclude": ["src/graphicspackages/GraphicsBrowserClient.ts"],
   "compilerOptions": {
     "experimentalDecorators": true,
     /* Basic Options */

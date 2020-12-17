@@ -1,63 +1,71 @@
 import { MediaObject } from '../MediaObject';
-import { ContentRenderer } from './ContentRenderer';
+import { ContentRenderer, RendererStatus } from './ContentRenderer';
 import { OBSSource, OBSBool, OBSString, OBSArray, OBSDataObject, OBSDataValue } from '../../../obs/RerunOBSBinding';
+import { PlaybackOffset } from '../Player';
 
 //Controls an OBS VLC source
-export class OBSVideoRenderer implements ContentRenderer {
+export class OBSVideoRenderer extends ContentRenderer {
     readonly supportedContentType = MediaObject.ContentType.LocalFile; 
     private vlcSource: OBSSource;
     constructor(readonly id: number, source: OBSSource) {
+        super();
         this.vlcSource = source;
     }
 
     private currentMedia: MediaObject = null;
 
-    loadMedia(media:MediaObject) : Promise<void> {
+    loadMedia(media:MediaObject) : void {
         /* OBS needs to always reload the block so that if the same video is playing it'll restart
         if (this.currentMedia != null && media.location.path === this.currentMedia.location.path) {
             return Promise.resolve(); //This media is already loaded
         }
         */
 
-        let playlistItem = new VLCPlaylistItem(media.location.getPath());
+        this.vlcSource.setEnabled(false); //Stop the file from playing right away
+        //Add the file to the playlist
+        this.vlcSource.updateSettings(new VLCSettings([ new VLCPlaylistItem(media.location.getPath()) ]));
+        this.currentMedia = media;
 
-        return new Promise((resolve, reject) => {
-            this.vlcSource.setEnabled(false); //Stop the file from playing right away
-            //Add the file to the playlist
-            this.vlcSource.updateSettings(new VLCSettings([playlistItem]));
-            this.currentMedia = media;
-            resolve();
-        });
+        this.updateStatus(RendererStatus.Ready); //TODO: Should go Loading -> Ready, but not sure how to get that info from OBS yet
     }
 
-    stop() : Promise<void> {
-        return new Promise((resolve, reject) => {
-            this.vlcSource.stopMedia();
-            resolve();
-        });
+    stopAndUnload() : void {
+        this.vlcSource.stopMedia();
+        this.vlcSource.setEnabled(false);
+        this.vlcSource.updateSettings(new VLCSettings([ ]));
+        this.currentMedia = null;
+        this.updateStatus(RendererStatus.Idle);
     }
 
     getLoadedMedia() : MediaObject {
         return this.currentMedia;
     }
 
-    play() : Promise<void> {
-        if (this.currentMedia == null) {
-            return Promise.reject('Cannot play - no media loaded');
-        }
-
-        return new Promise((resolve, reject) => {
-            this.vlcSource.setEnabled(true);
-            this.vlcSource.playMedia();
-            resolve();
-        });
+    getPlaybackProgressMs() : number {
+        return this.vlcSource.getMediaTime();
     }
 
-    restartMedia() : Promise<void> {
-        return new Promise((resolve, reject) => {
-            this.vlcSource.restartMedia();
-            resolve();
-        });
+    onceProgress(progress: PlaybackOffset, callback: () => void) : number {
+        return this.vlcSource.onceMediaTime(progress.evaluate(this.currentMedia.durationMs), callback);
+    }
+
+    offProgress(listenerId: number) {
+        this.vlcSource.offMediaTime(listenerId);
+    }
+
+    play() : void {
+        if (this.currentMedia == null) {
+            throw new Error('Cannot play - no media loaded');
+        }
+
+        this.vlcSource.setEnabled(true);
+        this.vlcSource.playMedia();
+        this.updateStatus(RendererStatus.Playing);
+    }
+
+    restart() : void {
+        this.vlcSource.restartMedia();
+        this.updateStatus(RendererStatus.Playing);
     }
 
     getOBSSource() { return this.vlcSource; }
