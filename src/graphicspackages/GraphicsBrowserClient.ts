@@ -4,7 +4,7 @@ This handles the websocket connection of the graphic to Rerun and exposes some o
 the graphic's code.
 */
 import WebSocket from "isomorphic-ws";
-import { WSConnection, WSEvent } from "../networking/WebsocketConnection";
+import { WSConnection, WSEvent, WSPendingResponse, WSErrorResponse, WSSuccessResponse } from "../networking/WebsocketConnection";
 // -- Type-only imports (won't be bundled into the browser JS) --
 import type { ContentBlock } from "../playback/ContentBlock";
 // ----
@@ -75,7 +75,7 @@ class GraphicsBrowserClient {
     
         this.ws.subscribe(PlayerQueueChannel, (newQueue) => { this.playerInfo.queue = newQueue; });
         this.ws.publish(GraphicStateChannel, this.currentState);
-        this.ws.setRequestHandler('progress', () => new WSConnection.SuccessResponse(this.currentState === GraphicState.In ? Date.now() - this.stateUpdatedTimestamp : 0));
+        this.ws.setRequestHandler('progress', () => new WSSuccessResponse(this.currentState === GraphicState.In ? Date.now() - this.stateUpdatedTimestamp : 0));
 
         //Requests sent to graphics code should be delayed until the page is finished loading
         this.ws.setRequestHandler('in', () => {
@@ -107,7 +107,7 @@ class GraphicsBrowserClient {
     }
 
     //Called when the server wants the graphic to appear
-    private handleInRequest() : WSConnection.WSPendingResponse {
+    private handleInRequest() : WSPendingResponse {
         if (this.transitionIn != null) {
             info('Transitioning in...');
 
@@ -117,7 +117,7 @@ class GraphicsBrowserClient {
             } catch (err) {
                 this.updateState(GraphicState.Error);
                 error('Error running in transition', err);
-                return new WSConnection.ErrorResponse('InError', "An error occurred while running the graphic's in transition");
+                return new WSErrorResponse('InError', "An error occurred while running the graphic's in transition");
             }
             
             this.updateState(GraphicState.TransitioningIn);
@@ -130,14 +130,14 @@ class GraphicsBrowserClient {
                 error('In transition promise rejected', err);
             });
 
-            return new WSConnection.SuccessResponse();
+            return new WSSuccessResponse();
         } else {
-            return new WSConnection.ErrorResponse('NoIn', 'Graphic has not registered an in transition');
+            return new WSErrorResponse('NoIn', 'Graphic has not registered an in transition');
         }
     }
 
     //Called when the server wants the graphic to disappear
-    private handleOutRequest() : WSConnection.WSPendingResponse {
+    private handleOutRequest() : WSPendingResponse {
         if (this.transitionOut != null) {
             info('Transitioning out...');
 
@@ -147,7 +147,7 @@ class GraphicsBrowserClient {
             } catch (err) {
                 this.updateState(GraphicState.Error);
                 error('Error running out transition', err);
-                return new WSConnection.ErrorResponse('OutError', "An error occurred while running the graphic's out transition");
+                return new WSErrorResponse('OutError', "An error occurred while running the graphic's out transition");
             }
             
             this.updateState(GraphicState.TransitioningOut);
@@ -159,9 +159,9 @@ class GraphicsBrowserClient {
                 error('Out transition promise rejected', err);
             });
 
-            return new WSConnection.SuccessResponse();
+            return new WSSuccessResponse();
         } else {
-            return new WSConnection.ErrorResponse('NoOut', 'Graphic has not registered an out transition');
+            return new WSErrorResponse('NoOut', 'Graphic has not registered an out transition');
         }
     }
     
