@@ -2,7 +2,7 @@ import { SingleListenable } from "../helpers/SingleListenable";
 import DynamicFactory from "../helpers/DynamicFactory";
 import { Tree } from "../helpers/Tree";
 import ControlPanelHandler from "../networking/ControlPanelHandler";
-import { WSConnection } from "../networking/WebsocketConnection";
+import { WSConnection, WSSuccessResponse, WSErrorResponse, WSPendingResponse } from "../networking/WebsocketConnection";
 import { ImmutableSaveableObject, ImmutableSaveableObjectWithConstructor, MutableSaveableObject, SaveableObject } from "./SaveableObject";
 const uuidv4 = require('uuid/v4');
 
@@ -384,15 +384,15 @@ export class TreePath extends StringProperty {
     }
 
     //Control panels working with this property send requests to traverse the tree
-    private getTreeNodeRequest(nodePath: string) : WSConnection.WSPendingResponse {
+    private getTreeNodeRequest(nodePath: string) : WSPendingResponse {
         let pathArray = nodePath.split('/').filter((el: string) => el.length > 0);
                 
         let targetNode = this.tree.getNodeAtPath(pathArray);
 
         if (targetNode != null) {
-            return new WSConnection.SuccessResponse(targetNode);
+            return new WSSuccessResponse(targetNode);
         } else {
-            return new WSConnection.ErrorResponse('InvalidPath');
+            return new WSErrorResponse('InvalidPath');
         }
     }
 

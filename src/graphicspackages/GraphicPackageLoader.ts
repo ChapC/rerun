@@ -3,7 +3,7 @@ import Express from "express";
 import { Request, Response } from "express";
 import { Tree } from "../helpers/Tree";
 import { ControlPanelListener, ControlPanelRequest } from "../networking/ControlPanelHandler";
-import { WSConnection } from "../networking/WebsocketConnection";
+import { WSConnection, WSSuccessResponse } from "../networking/WebsocketConnection";
 import { ContentBlock } from "../playback/ContentBlock";
 import { MediaObject } from "../playback/MediaObject";
 import { GraphicsLayerLocation } from "../playback/MediaLocations";
@@ -200,7 +200,7 @@ export class GraphicPackageLoader {
 
     @ControlPanelRequest('getGraphicsPackages')
     private getGraphicsPackagesRequest() {
-        return new WSConnection.SuccessResponse(this.getAvailablePackages());
+        return new WSSuccessResponse(this.getAvailablePackages());
     }
  }
 

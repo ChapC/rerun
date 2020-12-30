@@ -57,13 +57,13 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
                         } catch (error) {
                             console.error(`Error inside request handler for ${message.requestName}`, error);
                             //Return a default error object to the client
-                            response = new WSConnection.ErrorResponse('ServerError', 'An unexpected error occurred while processing this request.');
+                            response = new WSConnection.WSErrorResponse('ServerError', 'An unexpected error occurred while processing this request.');
                         }
 
                         //Response is either a SuccessResponse, an ErrorResponse or a promise resolving to either
 
-                        const processResponse = (response: WSConnection.SuccessResponse | WSConnection.ErrorResponse) => {
-                            if (WSConnection.SuccessResponse.isInstance(response)) {
+                        const processResponse = (response: WSConnection.WSSuccessResponse | WSConnection.WSErrorResponse) => {
+                            if (WSConnection.WSSuccessResponse.isInstance(response)) {
                                 let status = 'okay';
                                 if (response.status) { //If a custom status was defined by the request handler
                                     status = response.status;
@@ -85,7 +85,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
                             response.then(processResponse).catch((error) => {
                                 console.error(`Error inside request handler promise for ${message.requestName}`, error);
                                 //Return a default error object to the client
-                                processResponse(new WSConnection.ErrorResponse('ServerError', 'An unexpected error occurred while processing this request.'));
+                                processResponse(new WSConnection.WSErrorResponse('ServerError', 'An unexpected error occurred while processing this request.'));
                             });
                         } else { //The handler returned immediately - process/send the response now
                             processResponse(response);
@@ -121,9 +121,9 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
                     }
                     this.pendingRequests.delete(message.reqId);
 
-                    if (WSConnection.ErrorResponse.isInstance(message)) {
+                    if (WSConnection.WSErrorResponse.isInstance(message)) {
                         callback.reject(message);
-                    } else if (WSConnection.SuccessResponse.isInstance(message)) {
+                    } else if (WSConnection.WSSuccessResponse.isInstance(message)) {
                         callback.resolve(message);
                     }
                 }
@@ -161,7 +161,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
 
     private requestIDCounter = 0;
     private requestHandlers : Map<string, WSConnection.WSReqHandler> = new Map(); //Maps request name to its handler
-    private pendingRequests : Map<number, {resolve: (res: WSConnection.SuccessResponse) => void, reject: (err: WSConnection.ErrorResponse) => void}> = new Map(); //Maps outgoing request IDs to their response promises
+    private pendingRequests : Map<number, {resolve: (res: WSConnection.WSSuccessResponse) => void, reject: (err: WSConnection.WSErrorResponse) => void}> = new Map(); //Maps outgoing request IDs to their response promises
 
     /**
      * Send a request to the other end of the socket.
@@ -169,10 +169,10 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
      * @param data (Optional) Data to send as the body of the request
      * @returns A promise resolving to a SuccessResponse or rejecting with an ErrorResponse.
      */
-    sendRequest(requestName: string, data?:any) : Promise<WSConnection.SuccessResponse> {
+    sendRequest(requestName: string, data?:any) : Promise<WSConnection.WSSuccessResponse> {
         let resPromiseResolver;
         //Pull the resolve and reject callbacks out of the promise
-        let resPromise = new Promise<WSConnection.SuccessResponse>((resolve, reject) => resPromiseResolver = {resolve: resolve, reject: reject});
+        let resPromise = new Promise<WSConnection.WSSuccessResponse>((resolve, reject) => resPromiseResolver = {resolve: resolve, reject: reject});
 
         //Store the resolver in pendingRequests
         let requestId = this.requestIDCounter++;
@@ -218,7 +218,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
             if (typeGuard(data)) {
                 return handler(data);
             } else {
-                return new WSConnection.ErrorResponse('InvalidType', 'Invalid data type for request');
+                return new WSConnection.WSErrorResponse('InvalidType', 'Invalid data type for request');
             }
         }
 
@@ -234,7 +234,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
      */
     //Incoming
     private subIDCounter = 0;
-    private subChannels: Map<string, WSConnection.Subscription[]> = new Map(); //Maps channel name to subscriptions for that channel
+    private subChannels: Map<string, WSConnection.WSSubscription[]> = new Map(); //Maps channel name to subscriptions for that channel
     private inChannelMessageCache: Map<string, any> = new Map(); //Maps channel name to the last received message on that channel
     //Outgoing
     private outChannelMessageCache: Map<string, any> = new Map(); //Maps channel name to the last published message on that channel
@@ -264,7 +264,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
      * @param channel The channel to listen on
      * @param onMessage Function accepting incoming messages on this channel
      */
-    subscribe(channel: string, onMessage: (message: any) => void) : WSConnection.Subscription {
+    subscribe(channel: string, onMessage: (message: any) => void) : WSConnection.WSSubscription {
         let id = this.subIDCounter++;
         let cancel = () => {
             let subChannelsList = this.subChannels.get(channel);
@@ -280,7 +280,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
             }
         }
  
-        let sub = new WSConnection.Subscription(id, channel, cancel, onMessage);
+        let sub = new WSConnection.WSSubscription(id, channel, cancel, onMessage);
 
         if (!this.subChannels.has(channel)) {
             this.subChannels.set(channel, [ sub ]);
@@ -346,45 +346,43 @@ function isPromise(something: any) : something is Promise<any> {
 
 type Timeout = ReturnType<typeof setTimeout>;
 
-export namespace WSConnection {
-    //Used by request handlers - they can return whichever one they need
-    export class SuccessResponse {
-        constructor(readonly data?: any, readonly status?: string) {}
+//Used by request handlers - they can return whichever one they need
+export class WSSuccessResponse {
+    constructor(readonly data?: any, readonly status?: string) {}
 
-        static isInstance(something: any) : something is SuccessResponse {
-            return ((typeof something.status) === 'string' && something.status !== 'error');
-        }
+    static isInstance(something: any) : something is WSSuccessResponse {
+        return ((typeof something.status) === 'string' && something.status !== 'error');
     }
+}
 
-    export class ErrorResponse {
-        status: string = 'error';
-        constructor(readonly errorCode: string, readonly message?: string) { }
+export class WSErrorResponse {
+    status: string = 'error';
+    constructor(readonly errorCode: string, readonly message?: string) { }
 
-        static isInstance(something: any) : something is ErrorResponse {
-            return (something.errorCode != null && something.reqId != null);
-        }
+    static isInstance(something: any) : something is WSErrorResponse {
+        return (something.errorCode != null && something.reqId != null);
     }
+}
 
-    export class Subscription {
-        constructor(
-            readonly id: number, readonly forChannel: string, 
-            private readonly cancelFunc: () => void,
-            readonly callback: (obj: any) => void
-            ) {}
+export class WSSubscription {
+    constructor(
+        readonly id: number, readonly forChannel: string, 
+        private readonly cancelFunc: () => void,
+        readonly callback: (obj: any) => void
+        ) {}
 
-        /**
-         * Cancel this subscription. 
-         * The subscription's onMessage callback will no longer receive updates.
-         */
-        public cancel() : void {
-            this.cancelFunc();
-        }
+    /**
+     * Cancel this subscription. 
+     * The subscription's onMessage callback will no longer receive updates.
+     */
+    public cancel() : void {
+        this.cancelFunc();
     }
+}
 
-    export type WSPendingResponse = SuccessResponse | ErrorResponse | Promise<SuccessResponse | ErrorResponse>;
-    export type WSReqHandler = (data: any) => WSPendingResponse;
-    
-    export function AcceptAny(obj: any) : obj is any {
-        return true;
-    }
+export type WSPendingResponse = WSSuccessResponse | WSErrorResponse | Promise<WSSuccessResponse | WSErrorResponse>;
+export type WSReqHandler = (data: any) => WSPendingResponse;
+
+export function AcceptAny(obj: any) : obj is any {
+    return true;
 }

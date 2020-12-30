@@ -4,7 +4,7 @@ import { GraphicsLayerLocation } from '../MediaLocations';
 import { OBSSource, OBSString } from '../../../obs/RerunOBSBinding';
 import { PlaybackOffset } from '../Player';
 import WebsocketLobby from '../../networking/WebsocketLobby';
-import { WSConnection } from '../../networking/WebsocketConnection';
+import { WSConnection, WSSubscription } from '../../networking/WebsocketConnection';
 import { GraphicLayerReference } from '../../graphicspackages/GraphicPackageLoader';
 
 const GraphicStateChannel = 'state';
@@ -21,7 +21,7 @@ export class RerunGraphicRenderer extends ContentRenderer {
 
     private currentGraphic: MediaObject;
     private graphicSocket: WSConnection;
-    private stateSubscription: WSConnection.Subscription;
+    private stateSubscription: WSSubscription;
 
     private pendingUnload = false;
 

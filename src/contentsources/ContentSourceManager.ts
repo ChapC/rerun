@@ -4,7 +4,7 @@ import { Player, PlayerEvent } from '../playback/Player';
 import { IJSONSavable, JSONSavable } from '../persistence/JSONSavable';
 import { LocalDirectorySource } from './LocalDirectorySource';
 import ControlPanelHandler, { ControlPanelListener, ControlPanelRequest } from '../networking/ControlPanelHandler';
-import { WSConnection } from '../networking/WebsocketConnection';
+import { AcceptAny, WSConnection, WSErrorResponse, WSSuccessResponse } from '../networking/WebsocketConnection';
 
 const uuidv4 = require('uuid/v4');
 
@@ -199,78 +199,78 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
     }
 
     //Control panel requests
-    @ControlPanelRequest('pullFromContentSource', WSConnection.AcceptAny)
+    @ControlPanelRequest('pullFromContentSource', AcceptAny)
     private pullFromContentSourceRequest(data: any) { //Pull the next media object from a content source and queue it for playback
         if (data.sourceId == null) {
-            return new WSConnection.ErrorResponse('InvalidArguments', 'No content source ID provided');
+            return new WSErrorResponse('InvalidArguments', 'No content source ID provided');
         }
 
         const targetSource = this.getSource(data.sourceId);
         if (targetSource == null) {
-            return new WSConnection.ErrorResponse('InvalidID', 'No content source with the target ID');
+            return new WSErrorResponse('InvalidID', 'No content source with the target ID');
         }
 
         return new Promise((resolve, reject) => {
             targetSource.poll().then((block) => {
                 this.player.enqueueBlock(block);
-                resolve(new WSConnection.SuccessResponse('Queued item from source ' + targetSource.name));
+                resolve(new WSSuccessResponse('Queued item from source ' + targetSource.name));
             }).catch((error) => {
                 console.error('Pull from content source failed ', error);
-                reject(new WSConnection.ErrorResponse('PullFailed', JSON.stringify(error)));
+                reject(new WSErrorResponse('PullFailed', JSON.stringify(error)));
             });
         });
     }
 
-    @ControlPanelRequest('newContentSource', WSConnection.AcceptAny)
+    @ControlPanelRequest('newContentSource', AcceptAny)
     private newContentSourceRequest(data: any) {
         if (data.newSource == null) {
-            return new WSConnection.ErrorResponse('InvalidArguments', 'No content source provided');
+            return new WSErrorResponse('InvalidArguments', 'No content source provided');
         }
 
         return new Promise((resolve, reject) => {
             this.createContentSourceFromRequest(data.newSource).then((source) => {
                 this.addSource(source);
-                resolve(new WSConnection.SuccessResponse('Created content source with ID ' + source.id));
+                resolve(new WSSuccessResponse('Created content source with ID ' + source.id));
             }).catch((error) => {
-                reject(new WSConnection.ErrorResponse('CreateFailed', JSON.stringify(error)));
+                reject(new WSErrorResponse('CreateFailed', JSON.stringify(error)));
             });
         });
     }
 
-    @ControlPanelRequest('deleteContentSource', WSConnection.AcceptAny)
+    @ControlPanelRequest('deleteContentSource', AcceptAny)
     private deleteContentSourceRequest(data: any) {
         if (data.sourceId == null) {
-            return new WSConnection.ErrorResponse('InvalidArguments', 'No source ID provided');
+            return new WSErrorResponse('InvalidArguments', 'No source ID provided');
         }
 
         this.removeSource(data.sourceId);
-        return new WSConnection.SuccessResponse('Removed source with ID ' + data.sourceId);
+        return new WSSuccessResponse('Removed source with ID ' + data.sourceId);
     }
 
-    @ControlPanelRequest('updateContentSource', WSConnection.AcceptAny)
+    @ControlPanelRequest('updateContentSource', AcceptAny)
     private updateContentSourceRequest(data: any) {
         if (data.sourceId == null || data.newSource == null) {
-            return new WSConnection.ErrorResponse('InvalidArguments', 'No source ID and source data provided');
+            return new WSErrorResponse('InvalidArguments', 'No source ID and source data provided');
         }
 
         return new Promise((resolve, reject) => {
             this.createContentSourceFromRequest(data.newSource).then((source) => {
                 this.updateSource(data.sourceId, source);
-                resolve(new WSConnection.SuccessResponse('Updated source with ID ' + data.sourceId));
+                resolve(new WSSuccessResponse('Updated source with ID ' + data.sourceId));
             }).catch((error) => {
-                reject(new WSConnection.ErrorResponse('UpdateFailed', JSON.stringify(error)));
+                reject(new WSErrorResponse('UpdateFailed', JSON.stringify(error)));
             });
         });
     }
 
     @ControlPanelRequest('getContentSources')
     private getContentSourcesRequest() {
-        return new WSConnection.SuccessResponse(this.getSources());
+        return new WSSuccessResponse(this.getSources());
     }
 
     @ControlPanelRequest('getAutoPool')
     private getAutoPoolRequest() {
-        return new WSConnection.SuccessResponse({
+        return new WSSuccessResponse({
             pool: this.getAutoSourcePool(),
             options: this.getAutoPoolOptions()
         });
@@ -279,21 +279,21 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
     @ControlPanelRequest('setAutoPoolOptions', ContentSourceManager.isAutoPoolOptions)
     private setAutoPoolRequest(newOptions: ContentSourceManager.AutoPoolOptions) {
         this.setAutoPoolOptions(newOptions);
-        return new WSConnection.SuccessResponse('Set options');
+        return new WSSuccessResponse('Set options');
     }
 
     private static isAutoPoolOptions(obj: any) : obj is ContentSourceManager.AutoPoolOptions {
         return (obj.enabled != null && obj.targetQueueSize != null && obj.pullOrder != null);
     }
 
-    @ControlPanelRequest('setUseSourceInPool', WSConnection.AcceptAny)
+    @ControlPanelRequest('setUseSourceInPool', AcceptAny)
     private useSourceInPoolRequest(data: any) {
         if (data.sourceId == null || data.enabled == null) {
-            return new WSConnection.ErrorResponse('InvalidArguments', 'No source ID and enabled status provided');                         
+            return new WSErrorResponse('InvalidArguments', 'No source ID and enabled status provided');                         
         }
 
         this.setUseSourceForAuto(data.sourceId, data.enabled);
-        return new WSConnection.SuccessResponse(`Set source to ${data.sourceId} to ${data.enabled}`);
+        return new WSSuccessResponse(`Set source to ${data.sourceId} to ${data.enabled}`);
     }
 
     private createContentSourceFromRequest(requestedSource : any) : Promise<ContentSource> {

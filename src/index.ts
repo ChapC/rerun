@@ -18,7 +18,7 @@ import RerunUserSettings from "./RerunUserSettings";
 import { AlertContainer } from "./helpers/AlertContainer";
 import StartupSteps from "./StartupSteps";
 import { JSONSavable } from "./persistence/JSONSavable";
-import { WSConnection } from "./networking/WebsocketConnection";
+import { WSConnection, WSSuccessResponse } from "./networking/WebsocketConnection";
 import OBS, { GraphicsModule, SpeakerLayout, EncoderConfig, VideoEncoderType, AudioEncoderType, OBSString, OBSInt, OBSClient, OBSOrder, OBSBool } from '../obs/RerunOBSBinding'; 
 import RendererPool from "./playback/renderers/RendererPool";
 import RenderHierarchy, { OBSRenderHierarchy } from "./playback/renderers/RenderHierarchy";
@@ -90,7 +90,7 @@ if (rerunState.localIP == null) {
 const ControlPanelAlertsChannel = 'alerts';
 rerunState.alerts = new AlertContainer();
 rerunState.alerts.addChangeListener((alerts) => ControlPanelHandler.getInstance().publish(ControlPanelAlertsChannel, alerts));
-ControlPanelHandler.getInstance().registerEmptyHandler('getAlerts', () => new WSConnection.SuccessResponse(rerunState.alerts.getAlerts()));
+ControlPanelHandler.getInstance().registerEmptyHandler('getAlerts', () => new WSSuccessResponse(rerunState.alerts.getAlerts()));
 
 //Startup chain
 let startup = new StartupSteps(rerunState);

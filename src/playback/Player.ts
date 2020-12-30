@@ -3,7 +3,7 @@ import {MediaObject} from './MediaObject';
 import {PublicRerunComponents} from '../index';
 import {ListenerGroup, MultiListenable} from '../helpers/MultiListenable';
 import PrefixedLogger from '../helpers/PrefixedLogger';
-import { WSConnection } from '../networking/WebsocketConnection';
+import { WSPendingResponse, WSSuccessResponse, WSErrorResponse, AcceptAny } from '../networking/WebsocketConnection';
 import { ControlPanelRequest, ControlPanelListener } from '../networking/ControlPanelHandler';
 import { mediaObjectFromVideoFile } from "../contentsources/LocalDirectorySource";
 import fs from 'fs';
@@ -612,33 +612,33 @@ export class Player extends MultiListenable<PlayerEvent, any> {
     //Control panel requests
 
     @ControlPanelRequest('getPlayingBlocks')
-    private getPlayingRequest() : WSConnection.WSPendingResponse {
-        return new WSConnection.SuccessResponse(this.getPlayingBlocks()); //TODO: Update ContentBlocksWithProgress to include the node's playback status - the client side should be able to display this
+    private getPlayingRequest() : WSPendingResponse {
+        return new WSSuccessResponse(this.getPlayingBlocks()); //TODO: Update ContentBlocksWithProgress to include the node's playback status - the client side should be able to display this
     }
 
     @ControlPanelRequest('getQueue')
-    private getQueueRequest() : WSConnection.WSPendingResponse {
-        return new WSConnection.SuccessResponse(this.getQueue());
+    private getQueueRequest() : WSPendingResponse {
+        return new WSSuccessResponse(this.getQueue());
     }
 
     @ControlPanelRequest('skipForward')
-    private skipForward() : WSConnection.WSPendingResponse { //Skip to the next node on the primary path
+    private skipForward() : WSPendingResponse { //Skip to the next node on the primary path
         if (this.playbackFront[0].children.length == 0) {
-            return new WSConnection.ErrorResponse('QueueEmpty', 'Nothing to skip to - the queue is empty');
+            return new WSErrorResponse('QueueEmpty', 'Nothing to skip to - the queue is empty');
         }
 
         let currentNode = this.playbackFront[0];
         this.log.info(`Skipping node ${this.nodeLogID(currentNode)}`);
         this.handleNodeFinished(currentNode); //Fire the finished handler for this node right now
-        return new WSConnection.SuccessResponse("Skipped");
+        return new WSSuccessResponse("Skipped");
     }
 
     @ControlPanelRequest('stopToTitle')
-    private stopToTitleRequest() : WSConnection.WSPendingResponse {
+    private stopToTitleRequest() : WSPendingResponse {
         let primaryNode = this.playbackFront[0];
 
         if (primaryNode.block.id == this.defaultBlock.id) {
-            return new WSConnection.ErrorResponse('AlreadyStopped', 'The default title block is already playing');
+            return new WSErrorResponse('AlreadyStopped', 'The default title block is already playing');
         }
         this.log.info('Stopping to default block');
 
@@ -678,11 +678,11 @@ export class Player extends MultiListenable<PlayerEvent, any> {
 
         this.fireEvent(PlayerEvent.ActiveBlocksChanged, this.getPlayingBlocks())
 
-        return new WSConnection.SuccessResponse('Stopped');
+        return new WSSuccessResponse('Stopped');
     }
 
     @ControlPanelRequest('restartBlock')
-    private restartPlaybackRequest() : WSConnection.WSPendingResponse {
+    private restartPlaybackRequest() : WSPendingResponse {
         //Restart the current primary node
         let currentNode = this.playbackFront[0];
         let nListener = this.nodeListenersMap.get(currentNode.id);
@@ -691,36 +691,36 @@ export class Player extends MultiListenable<PlayerEvent, any> {
         currentNode.renderer.restart();
         this.fireEvent(PlayerEvent.ActiveBlocksChanged, this.getPlayingBlocks());
 
-        return new WSConnection.SuccessResponse('Restarted');
+        return new WSSuccessResponse('Restarted');
     }
 
     @ControlPanelRequest('queueChange', QueueChange.isInstance)
-    private scheduleChangeRequest(requestedChange: QueueChange) : WSConnection.WSPendingResponse {
+    private scheduleChangeRequest(requestedChange: QueueChange) : WSPendingResponse {
         if (requestedChange.queueIdTarget === -1) {
             //This is a delete request
             this.dequeueNode(requestedChange.queueIdToMove);
-            return new WSConnection.SuccessResponse(`ContentBlock ${requestedChange.queueIdToMove} removed`);
+            return new WSSuccessResponse(`ContentBlock ${requestedChange.queueIdToMove} removed`);
         } else {
             //This is a reorder request
             let success = this.reorderQueuedNode(requestedChange.queueIdToMove, requestedChange.queueIdTarget, requestedChange.placeBefore);
             if (success) {
-                return new WSConnection.SuccessResponse(`ContentBlock ${requestedChange.queueIdToMove} moved`);
+                return new WSSuccessResponse(`ContentBlock ${requestedChange.queueIdToMove} moved`);
             } else {
-                return new WSConnection.ErrorResponse('Invalid queue IDs');
+                return new WSErrorResponse('Invalid queue IDs');
             }
         }
     }
 
-    @ControlPanelRequest('updateContentBlock', WSConnection.AcceptAny)
-    private updateBlockRequest(data: any): WSConnection.WSPendingResponse {
+    @ControlPanelRequest('updateContentBlock', AcceptAny)
+    private updateBlockRequest(data: any): WSPendingResponse {
         return new Promise((resolve, reject) => {
             //Try to create a new content block from the provided one
             this.createContentBlockFromRequest(data.block).then((contentBlock: ContentBlock) => {
                 contentBlock.id = data.block.id; //Replace the generated id with the target id
                 if (this.updateQueuedNode(data.block.queuedId, contentBlock)) {
-                    resolve(new WSConnection.SuccessResponse(`Updated block with id ${contentBlock.id}`));
+                    resolve(new WSSuccessResponse(`Updated block with id ${contentBlock.id}`));
                 } else {
-                    reject(new WSConnection.ErrorResponse('Invalid target block'));
+                    reject(new WSErrorResponse('Invalid target block'));
                 };
             }).catch(error => {
                 console.error('Failed to create content block from request:', error);
@@ -729,14 +729,14 @@ export class Player extends MultiListenable<PlayerEvent, any> {
         });
     }
 
-    @ControlPanelRequest('addContentBlock', WSConnection.AcceptAny)
-    private addContentBlockRequest(data: any) : WSConnection.WSPendingResponse {
-        return new WSConnection.ErrorResponse('NotImplemented');
+    @ControlPanelRequest('addContentBlock', AcceptAny)
+    private addContentBlockRequest(data: any) : WSPendingResponse {
+        return new WSErrorResponse('NotImplemented');
 
 /*         return new Promise((resolve, reject) => {
             this.createContentBlockFromRequest(data.block).then((contentBlock: ContentBlock) => {
                 this.rerunState.player.enqueueBlock(contentBlock);
-                resolve(new WSConnection.SuccessResponse(`Enqueued content block ${data.block.id}`));
+                resolve(new SuccessResponse(`Enqueued content block ${data.block.id}`));
             }).catch(error => {
                 console.error('Failed to enqueue new content block:', error);
                 resolve(error);
