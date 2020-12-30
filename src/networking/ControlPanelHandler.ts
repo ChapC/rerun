@@ -1,4 +1,4 @@
-import { WSConnection, WSEvent } from './WebsocketConnection';
+import { WSConnection, WSEvent, WSPendingResponse, WSReqHandler } from './WebsocketConnection';
 import WebSocket from 'ws';
 import WSPublishRepeater from './WSPublishRepeater';
 
@@ -42,7 +42,7 @@ export default class ControlPanelHandler {
      * @param typeGuard A type guard function to test incoming requests against
      * @param handler Callback to trigger when the request is received
      */
-    registerHandler<TRequestData>(requestName: string, typeGuard: (reqData: any) => reqData is TRequestData, handler: WSConnection.WSReqHandler) {
+    registerHandler<TRequestData>(requestName: string, typeGuard: (reqData: any) => reqData is TRequestData, handler: WSReqHandler) {
         if (this.requestHandlers[requestName]) {
             console.warn(`There are multiple request handlers registered for the ${requestName} endpoint`);
             return;
@@ -59,7 +59,7 @@ export default class ControlPanelHandler {
      * @param requestName Request to handle
      * @param handler Callback to trigger when the request is received
      */
-    registerEmptyHandler(requestName: string, handler: () => WSConnection.WSPendingResponse) {
+    registerEmptyHandler(requestName: string, handler: () => WSPendingResponse) {
         if (this.requestHandlers[requestName]) {
             console.warn(`There are multiple request handlers registered for the ${requestName} endpoint`);
             return;

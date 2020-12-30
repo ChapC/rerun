@@ -51,19 +51,19 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
 
                     if (this.requestHandlers.has(message.requestName)) {
                         //Pass the message to this handler
-                        let response : WSConnection.WSPendingResponse;
+                        let response : WSPendingResponse;
                         try {
                             response = this.requestHandlers.get(message.requestName)(message.data);
                         } catch (error) {
                             console.error(`Error inside request handler for ${message.requestName}`, error);
                             //Return a default error object to the client
-                            response = new WSConnection.WSErrorResponse('ServerError', 'An unexpected error occurred while processing this request.');
+                            response = new WSErrorResponse('ServerError', 'An unexpected error occurred while processing this request.');
                         }
 
                         //Response is either a SuccessResponse, an ErrorResponse or a promise resolving to either
 
-                        const processResponse = (response: WSConnection.WSSuccessResponse | WSConnection.WSErrorResponse) => {
-                            if (WSConnection.WSSuccessResponse.isInstance(response)) {
+                        const processResponse = (response: WSSuccessResponse | WSErrorResponse) => {
+                            if (WSSuccessResponse.isInstance(response)) {
                                 let status = 'okay';
                                 if (response.status) { //If a custom status was defined by the request handler
                                     status = response.status;
@@ -85,7 +85,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
                             response.then(processResponse).catch((error) => {
                                 console.error(`Error inside request handler promise for ${message.requestName}`, error);
                                 //Return a default error object to the client
-                                processResponse(new WSConnection.WSErrorResponse('ServerError', 'An unexpected error occurred while processing this request.'));
+                                processResponse(new WSErrorResponse('ServerError', 'An unexpected error occurred while processing this request.'));
                             });
                         } else { //The handler returned immediately - process/send the response now
                             processResponse(response);
@@ -121,9 +121,9 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
                     }
                     this.pendingRequests.delete(message.reqId);
 
-                    if (WSConnection.WSErrorResponse.isInstance(message)) {
+                    if (WSErrorResponse.isInstance(message)) {
                         callback.reject(message);
-                    } else if (WSConnection.WSSuccessResponse.isInstance(message)) {
+                    } else if (WSSuccessResponse.isInstance(message)) {
                         callback.resolve(message);
                     }
                 }
@@ -160,8 +160,8 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
     // -- Requests --
 
     private requestIDCounter = 0;
-    private requestHandlers : Map<string, WSConnection.WSReqHandler> = new Map(); //Maps request name to its handler
-    private pendingRequests : Map<number, {resolve: (res: WSConnection.WSSuccessResponse) => void, reject: (err: WSConnection.WSErrorResponse) => void}> = new Map(); //Maps outgoing request IDs to their response promises
+    private requestHandlers : Map<string, WSReqHandler> = new Map(); //Maps request name to its handler
+    private pendingRequests : Map<number, {resolve: (res: WSSuccessResponse) => void, reject: (err: WSErrorResponse) => void}> = new Map(); //Maps outgoing request IDs to their response promises
 
     /**
      * Send a request to the other end of the socket.
@@ -169,10 +169,10 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
      * @param data (Optional) Data to send as the body of the request
      * @returns A promise resolving to a SuccessResponse or rejecting with an ErrorResponse.
      */
-    sendRequest(requestName: string, data?:any) : Promise<WSConnection.WSSuccessResponse> {
+    sendRequest(requestName: string, data?:any) : Promise<WSSuccessResponse> {
         let resPromiseResolver;
         //Pull the resolve and reject callbacks out of the promise
-        let resPromise = new Promise<WSConnection.WSSuccessResponse>((resolve, reject) => resPromiseResolver = {resolve: resolve, reject: reject});
+        let resPromise = new Promise<WSSuccessResponse>((resolve, reject) => resPromiseResolver = {resolve: resolve, reject: reject});
 
         //Store the resolver in pendingRequests
         let requestId = this.requestIDCounter++;
@@ -195,7 +195,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
      * @param requestName The request this handler will listen for
      * @param handler A function accepting the request data and returning a response
      */
-    setRequestHandler(requestName: string, handler: WSConnection.WSReqHandler) {
+    setRequestHandler(requestName: string, handler: WSReqHandler) {
         this.requestHandlers.set(requestName, handler);
     }
 
@@ -212,13 +212,13 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
      *
      * If an incoming request's data doesn't pass the type guard, it will be automatically rejected with an ErrorResponse. 
      */
-    setGuardedRequestHandler<T>(requestName: string, typeGuard: (something: any) => something is T, handler: (data: T) => WSConnection.WSPendingResponse) {
+    setGuardedRequestHandler<T>(requestName: string, typeGuard: (something: any) => something is T, handler: (data: T) => WSPendingResponse) {
         //Wrap the handler in a type guard check
-        let wrappedHandler : WSConnection.WSReqHandler = (data) => {
+        let wrappedHandler : WSReqHandler = (data) => {
             if (typeGuard(data)) {
                 return handler(data);
             } else {
-                return new WSConnection.WSErrorResponse('InvalidType', 'Invalid data type for request');
+                return new WSErrorResponse('InvalidType', 'Invalid data type for request');
             }
         }
 
@@ -234,7 +234,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
      */
     //Incoming
     private subIDCounter = 0;
-    private subChannels: Map<string, WSConnection.WSSubscription[]> = new Map(); //Maps channel name to subscriptions for that channel
+    private subChannels: Map<string, WSSubscription[]> = new Map(); //Maps channel name to subscriptions for that channel
     private inChannelMessageCache: Map<string, any> = new Map(); //Maps channel name to the last received message on that channel
     //Outgoing
     private outChannelMessageCache: Map<string, any> = new Map(); //Maps channel name to the last published message on that channel
@@ -264,7 +264,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
      * @param channel The channel to listen on
      * @param onMessage Function accepting incoming messages on this channel
      */
-    subscribe(channel: string, onMessage: (message: any) => void) : WSConnection.WSSubscription {
+    subscribe(channel: string, onMessage: (message: any) => void) : WSSubscription {
         let id = this.subIDCounter++;
         let cancel = () => {
             let subChannelsList = this.subChannels.get(channel);
@@ -280,7 +280,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
             }
         }
  
-        let sub = new WSConnection.WSSubscription(id, channel, cancel, onMessage);
+        let sub = new WSSubscription(id, channel, cancel, onMessage);
 
         if (!this.subChannels.has(channel)) {
             this.subChannels.set(channel, [ sub ]);
