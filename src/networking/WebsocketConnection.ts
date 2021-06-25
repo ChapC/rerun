@@ -57,14 +57,14 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
                         } catch (error) {
                             console.error(`Error inside request handler for ${message.requestName}`, error);
                             //Return a default error object to the client
-                            response = new WSErrorResponse('ServerError', 'An unexpected error occurred while processing this request.');
+                            response = new WSErrorResponse('An unexpected error occurred while processing this request.');
                         }
 
                         //Response is either a SuccessResponse, an ErrorResponse or a promise resolving to either
 
                         const processResponse = (response: WSSuccessResponse | WSErrorResponse) => {
                             if (WSSuccessResponse.isInstance(response)) {
-                                let status = 'okay';
+                                let status = 'ok';
                                 if (response.status) { //If a custom status was defined by the request handler
                                     status = response.status;
                                 }
@@ -75,7 +75,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
                             } else {
                                 //It's an error
                                 ws.send(JSON.stringify(
-                                    new Response(message.reqId, 'error', response.message, response.errorCode)
+                                    new Response(message.reqId, 'error', response.message)
                                 ));
                             }
                         }
@@ -84,8 +84,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
                         if (isPromise(response)) {
                             response.then(processResponse).catch((error) => {
                                 console.error(`Error inside request handler promise for ${message.requestName}`, error);
-                                //Return a default error object to the client
-                                processResponse(new WSErrorResponse('ServerError', 'An unexpected error occurred while processing this request.'));
+                                processResponse(new WSErrorResponse('An unexpected error occurred while processing this request.'));
                             });
                         } else { //The handler returned immediately - process/send the response now
                             processResponse(response);
@@ -93,7 +92,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
                     } else {
                         //There is no handler for this request type
                         ws.send(JSON.stringify(
-                            new Response(message.reqId, 'error', `Unknown request ${message.requestName} `, 'UnknownRequest')
+                            new Response(message.reqId, 'error', `Unknown request ${message.requestName} `)
                         ));
                     }
 
@@ -218,7 +217,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
             if (typeGuard(data)) {
                 return handler(data);
             } else {
-                return new WSErrorResponse('InvalidType', 'Invalid data type for request');
+                return new WSErrorResponse('Invalid data type for request');
             }
         }
 
@@ -317,7 +316,7 @@ export enum WSEvent { Open, Error, Close }
 
 //Used internally
 class Response {
-    constructor(readonly reqId: number, readonly status: string, readonly data?: any, readonly errorCode?: string) {}
+    constructor(readonly reqId: number, readonly status: string, readonly data?: any) {}
 
     static isInstance(something: any) : something is Response {
         return (something.reqId != null && something.status != null);
@@ -348,7 +347,11 @@ type Timeout = ReturnType<typeof setTimeout>;
 
 //Used by request handlers - they can return whichever one they need
 export class WSSuccessResponse {
-    constructor(readonly data?: any, readonly status?: string) {}
+    constructor(readonly data?: any, readonly status?: string) {
+        if (!status) {
+            this.status = 'ok';
+        }
+    }
 
     static isInstance(something: any) : something is WSSuccessResponse {
         return ((typeof something.status) === 'string' && something.status !== 'error');
@@ -357,10 +360,10 @@ export class WSSuccessResponse {
 
 export class WSErrorResponse {
     status: string = 'error';
-    constructor(readonly errorCode: string, readonly message?: string) { }
+    constructor(readonly message: string) { }
 
     static isInstance(something: any) : something is WSErrorResponse {
-        return (something.errorCode != null && something.reqId != null);
+        return (something.status === 'error' && something.reqId != null);
     }
 }
 

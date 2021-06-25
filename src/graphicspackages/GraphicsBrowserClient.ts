@@ -117,7 +117,7 @@ class GraphicsBrowserClient {
             } catch (err) {
                 this.updateState(GraphicState.Error);
                 error('Error running in transition', err);
-                return new WSErrorResponse('InError', "An error occurred while running the graphic's in transition");
+                return new WSErrorResponse("An error occurred while running the graphic's in transition");
             }
             
             this.updateState(GraphicState.TransitioningIn);
@@ -132,7 +132,7 @@ class GraphicsBrowserClient {
 
             return new WSSuccessResponse();
         } else {
-            return new WSErrorResponse('NoIn', 'Graphic has not registered an in transition');
+            return new WSErrorResponse('Graphic has not registered an in transition');
         }
     }
 
@@ -147,7 +147,7 @@ class GraphicsBrowserClient {
             } catch (err) {
                 this.updateState(GraphicState.Error);
                 error('Error running out transition', err);
-                return new WSErrorResponse('OutError', "An error occurred while running the graphic's out transition");
+                return new WSErrorResponse("An error occurred while running the graphic's out transition");
             }
             
             this.updateState(GraphicState.TransitioningOut);
@@ -161,7 +161,7 @@ class GraphicsBrowserClient {
 
             return new WSSuccessResponse();
         } else {
-            return new WSErrorResponse('NoOut', 'Graphic has not registered an out transition');
+            return new WSErrorResponse('Graphic has not registered an out transition');
         }
     }
     

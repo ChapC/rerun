@@ -6,12 +6,12 @@ import WSPublishRepeater from './WSPublishRepeater';
  * A singleton storing all active control panel websockets. 
  * Components can send data to control panels and register request handlers through this class.
  */
-export default class ControlPanelHandler {
+export default class ControlPanelSockets {
     private constructor() { }
 
-    private static instance: ControlPanelHandler = new ControlPanelHandler();
+    private static instance: ControlPanelSockets = new ControlPanelSockets();
 
-    static getInstance() : ControlPanelHandler {
+    static getInstance() : ControlPanelSockets {
         return this.instance;
     }
 
@@ -79,36 +79,6 @@ export default class ControlPanelHandler {
     }
 }
 
-//Decorators (TODO: This is kind of a confusing mix of static and instance level scope because I just wanted to try decorators out. These should probably be replaced with regular calls to registerHandler in the constructor)
-
-const RequestMethodStoreKey = Symbol('CPRequestMethodKey');
-type StoredRequestMethod = {requestName: string, typeGuard: (reqData: any) => reqData is any}
-
-export function ControlPanelRequest<TRequestData>(requestName: string, typeGuard?: (reqData: any) => reqData is TRequestData) {
-    return function(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
-        //Create (or add to) a map on the prototype storing all this class' registered requests
-        target[RequestMethodStoreKey] = target[RequestMethodStoreKey] || new Map(); 
-         //ControlPanelListener will access these later
-         target[RequestMethodStoreKey].set(propertyKey, {requestName: requestName, typeGuard: typeGuard});
-    }
-}
-
-
-export function ControlPanelListener<T extends { new(...args: any[]) : {}}>(Base: T) {
-    //Return a new constructor which checks for the RequestMethodStoreKey map and registers any methods decorated with ControlPanelRequest
-    return class extends Base {
-        constructor(...args: any[]) {
-            super(...args);
-            const requestMethods = Base.prototype[RequestMethodStoreKey];
-            if (requestMethods) {
-                requestMethods.forEach((storedMethod: StoredRequestMethod, methodKey: string) => {
-                    if (storedMethod.typeGuard) {
-                        ControlPanelHandler.getInstance().registerHandler(storedMethod.requestName, storedMethod.typeGuard, (data: any) => (this as any)[methodKey](data));
-                    } else {
-                        ControlPanelHandler.getInstance().registerEmptyHandler(storedMethod.requestName, () => (this as any)[methodKey]())
-                    }
-                });
-            }
-        }
-    }
+export abstract class ControlPanelInterface {
+    constructor(controlPanel: ControlPanelSockets) {};
 }

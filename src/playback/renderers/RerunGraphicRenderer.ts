@@ -97,7 +97,10 @@ export class RerunGraphicRenderer extends ContentRenderer {
     stopAndUnload() : void {
         if (this.currentGraphic == null) return; //Already stopped
 
-        this.graphicSocket.sendRequest('out').catch(() => this.updateStatus(RendererStatus.Error));
+        this.graphicSocket.sendRequest('out').catch((err) => {
+            this.logError(err)
+            this.updateStatus(RendererStatus.Error);
+        });
         this.pendingUnload = true;
 
         this.cancelAllProgressTimeouts();
@@ -107,7 +110,10 @@ export class RerunGraphicRenderer extends ContentRenderer {
         if (this.currentGraphic == null) throw Error("Nothing loaded");
 
         this.browserSource.setEnabled(true);
-        this.graphicSocket.sendRequest('in').then((res) => console.info('in requested', res)).catch(() => this.updateStatus(RendererStatus.Error));
+        this.graphicSocket.sendRequest('in').catch((err) => {
+            this.logError(err)
+            this.updateStatus(RendererStatus.Error);
+        });
     }
 
     restart() : void {
@@ -181,6 +187,10 @@ export class RerunGraphicRenderer extends ContentRenderer {
         for (let l of this.progressTimeouts) {
             if (l[1].timeout) clearTimeout(l[1].timeout);
         }
+    }
+
+    private logError(msg: any) {
+        console.warn(`Error in RerunGraphicRenderer(${this.id})`, msg);
     }
 }
 type CallbackWithID = { callback: () => void, id: number };

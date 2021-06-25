@@ -2,7 +2,6 @@ import fs, { Stats } from "fs";
 import Express from "express";
 import { Request, Response } from "express";
 import { Tree } from "../helpers/Tree";
-import { ControlPanelListener, ControlPanelRequest } from "../networking/ControlPanelHandler";
 import { WSConnection, WSSuccessResponse } from "../networking/WebsocketConnection";
 import { ContentBlock } from "../playback/ContentBlock";
 import { MediaObject } from "../playback/MediaObject";
@@ -12,7 +11,6 @@ const path = require('path');
 const jsdom = require("jsdom");
 const { JSDOM } = jsdom;
 
-@ControlPanelListener
 export class GraphicPackageLoader {
     //All graphics packages and layers. The first layer of the tree is packages, the second is layers.
     readonly graphicsTree: Tree<GraphicPackage, GraphicLayer> = new Tree(new Tree.BranchNode('Graphics packages'));
@@ -196,11 +194,6 @@ export class GraphicPackageLoader {
         }
 
         return block;
-    }
-
-    @ControlPanelRequest('getGraphicsPackages')
-    private getGraphicsPackagesRequest() {
-        return new WSSuccessResponse(this.getAvailablePackages());
     }
  }
 

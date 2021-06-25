@@ -1,9 +1,10 @@
 import { SingleListenable } from "../helpers/SingleListenable";
 import DynamicFactory from "../helpers/DynamicFactory";
 import { Tree } from "../helpers/Tree";
-import ControlPanelHandler from "../networking/ControlPanelHandler";
+import ControlPanelSockets from "../networking/ControlPanelSockets";
 import { WSConnection, WSSuccessResponse, WSErrorResponse, WSPendingResponse } from "../networking/WebsocketConnection";
 import { ImmutableSaveableObject, ImmutableSaveableObjectWithConstructor, MutableSaveableObject, SaveableObject } from "./SaveableObject";
+import { isString } from "../helpers/TypeGuards";
 const uuidv4 = require('uuid/v4');
 
 /**
@@ -380,7 +381,7 @@ export class TreePath extends StringProperty {
     constructor(name: string, readonly tree: Tree<any, any>) {
         super(name, null);
         this.id = uuidv4();
-        ControlPanelHandler.getInstance().registerHandler(`property/treepath/${this.id}/node:get`, isString, (n: string) => this.getTreeNodeRequest(n));
+        ControlPanelSockets.getInstance().registerHandler(`property/treepath/${this.id}/node:get`, isString, (n: string) => this.getTreeNodeRequest(n));
     }
 
     //Control panels working with this property send requests to traverse the tree
@@ -420,8 +421,4 @@ export class TreePath extends StringProperty {
             ...super.toJSON(), id: this.id
         }
     }
-}
-
-function isString(obj: any) : obj is string {
-    return (typeof obj) === 'string';
 }

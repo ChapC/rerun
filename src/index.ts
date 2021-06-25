@@ -12,7 +12,7 @@ import { GraphicPackageLoader, GraphicLayerReference } from "./graphicspackages/
 import { ContentSourceManager } from "./contentsources/ContentSourceManager";
 import { PathLike } from "fs";
 import { WebVideoDownloader } from './WebVideoDownloader';
-import ControlPanelHandler from './networking/ControlPanelHandler';
+import ControlPanelSockets from './networking/ControlPanelSockets';
 import { GraphicsLayerLocation, WebBufferLocation, LocalFileLocation } from './playback/MediaLocations';
 import RerunUserSettings from "./RerunUserSettings";
 import { AlertContainer } from "./helpers/AlertContainer";
@@ -63,7 +63,7 @@ export class PublicRerunComponents {
     userSettings: RerunUserSettings;
     downloadBuffer: WebVideoDownloader;
     contentSourceManager: ContentSourceManager;
-    controlPanelHandler: ControlPanelHandler = ControlPanelHandler.getInstance();
+    controlPanelHandler: ControlPanelSockets = ControlPanelSockets.getInstance();
 };
 
 export type ContentTypeRendererMap = {[contentType in MediaObject.ContentType] : {renderer: ContentRenderer, focus: Function}};
@@ -90,8 +90,8 @@ if (rerunState.localIP == null) {
 //Alerts listener
 const ControlPanelAlertsChannel = 'alerts';
 rerunState.alerts = new AlertContainer();
-rerunState.alerts.addChangeListener((alerts) => ControlPanelHandler.getInstance().publish(ControlPanelAlertsChannel, alerts));
-ControlPanelHandler.getInstance().registerEmptyHandler('getAlerts', () => new WSSuccessResponse(rerunState.alerts.getAlerts()));
+rerunState.alerts.addChangeListener((alerts) => ControlPanelSockets.getInstance().publish(ControlPanelAlertsChannel, alerts));
+ControlPanelSockets.getInstance().registerEmptyHandler('getAlerts', () => new WSSuccessResponse(rerunState.alerts.getAlerts()));
 
 //Startup chain
 let startup = new StartupSteps(rerunState);
@@ -132,7 +132,7 @@ let expressServer: any;
 startup.appendStep("Web server", (rerunState, l) => {
     l.info('Launching control panel app...');
     app.ws('/controlWS', function(ws:WebSocket, req) {
-        ControlPanelHandler.getInstance().acceptWebsocket(ws);
+        ControlPanelSockets.getInstance().acceptWebsocket(ws);
     });
 
     return new Promise((resolve) => {
@@ -364,12 +364,12 @@ startup.appendStep("Player", (rerunState, l) => {
     const PlayerTreeChannel = 'player-tree';
 
     rerunState.player.on(PlayerEvent.TreeChanged, (newTree: PlaybackNodeSnapshot[]) => {
-        ControlPanelHandler.getInstance().publish(PlayerTreeChannel, newTree);
+        ControlPanelSockets.getInstance().publish(PlayerTreeChannel, newTree);
         rerunState.graphicsPublishGroup.publish(PlayerTreeChannel, newTree);
     });
 
     let initialTree = rerunState.player.getTreeSnapshot();
-    ControlPanelHandler.getInstance().publish(PlayerTreeChannel, initialTree);
+    ControlPanelSockets.getInstance().publish(PlayerTreeChannel, initialTree);
     rerunState.graphicsPublishGroup.publish(PlayerTreeChannel, initialTree);
 
     return Promise.resolve();
@@ -402,7 +402,7 @@ startup.appendStep("Content sources", (rerunState, l) => {
             rerunState.contentSourceManager = new ContentSourceManager(path.join(saveFolder, 'contentsources.json'), rerunState.player);
             JSONSavable.updateSavable(rerunState.contentSourceManager, rerunState.contentSourceManager.savePath).then(() => {
                 rerunState.contentSourceManager.addChangeListener((sources) => {
-                    ControlPanelHandler.getInstance().publish('cs-list', sources);
+                    ControlPanelSockets.getInstance().publish('cs-list', sources);
                 });
         
                 rerunState.contentSourceManager.updateAutoPoolNow();

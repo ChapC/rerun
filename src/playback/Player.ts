@@ -1,21 +1,13 @@
 import {ContentBlock} from './ContentBlock';
-import {MediaObject} from './MediaObject';
 import {PublicRerunComponents} from '../index';
 import {ListenerGroup, MultiListenable} from '../helpers/MultiListenable';
 import PrefixedLogger from '../helpers/PrefixedLogger';
-import { WSPendingResponse, WSSuccessResponse, WSErrorResponse, AcceptAny } from '../networking/WebsocketConnection';
-import { ControlPanelRequest, ControlPanelListener } from '../networking/ControlPanelHandler';
-import { mediaObjectFromVideoFile } from "../contentsources/LocalDirectorySource";
-import fs from 'fs';
-import { mediaObjectFromYoutube } from "../contentsources/YoutubeChannelSource";
-import { ScheduleChange as QueueChange } from './QueueChange';
 import PlaybackNode, { NodePlaybackStatus, PlaybackNodeEvent } from './PlaybackNode';
 import RendererPool, { LeasedContentRenderer } from './renderers/RendererPool';
 import RenderHierarchy from './renderers/RenderHierarchy';
 import { RendererStatus } from './renderers/ContentRenderer';
 
 export enum PlayerEvent { TreeChanged };
-@ControlPanelListener
 export class Player extends MultiListenable<PlayerEvent, any> {
     private readonly maxPreloadedBlocks = 6; //The maximum number of blocks that will be preloaded into renderers in advance
 
@@ -118,9 +110,7 @@ export class Player extends MultiListenable<PlayerEvent, any> {
             }
         }
 
-        for (let child of node.children) {
-            createStarterForConcurrentChild(child);
-        }
+        node.children.map(createStarterForConcurrentChild)
 
         nodeListener.on(PlaybackNodeEvent.ChildAdded, createStarterForConcurrentChild);
         nodeListener.on(PlaybackNodeEvent.ChildRemoved, removeStarterForConcurrentChild);
@@ -317,8 +307,8 @@ export class Player extends MultiListenable<PlayerEvent, any> {
     }
 
     /**
-     * Remove a ContentBlock from the player queue.
-     * @param queuedNodeId Node ID of the block to remove
+     * Remove a queued node from the player tree.
+     * @param queuedNodeId Id of the node to remove
      */
     public dequeueNode(queuedNodeId: number) {
         //Find this node in the tree
@@ -326,7 +316,7 @@ export class Player extends MultiListenable<PlayerEvent, any> {
         if (!targetNode) return;
 
         if (targetNode.playbackStatus !== NodePlaybackStatus.Queued) {
-            return; //Cannot remove a node that's currently playing (the UI shouldn't allow this anyway)
+            throw new ModifyingActiveNodeError(targetNode); //Cannot remove a node that's currently playing (the UI shouldn't allow this anyway)
         }
 
         //Splice this node out of the queue
@@ -362,32 +352,70 @@ export class Player extends MultiListenable<PlayerEvent, any> {
     }
 
     /**
-     * Move a node to another position in the queue relative to some other queued node.
-     * @param sourceQueuedId ID of the source node to move
-     * @param destinationQueuedId ID of the destination node that source should be moved next to
-     * @param placeBefore Whether the source node should be placed before or after the destination node
-     * @returns True if the reorder completed, False if the either node could not be found or source node is currently playing
+     * Skip to the end of a playing node. If the target node has consecutive children, they will start playing immediately.
+     * 
+     * Any queued concurrent children will also be skipped.
+     * @param targetNodeId Id of node to skip
      */
-    public reorderQueuedNode(sourceQueuedId: number, destinationQueuedId: number, placeBefore: boolean) : boolean {
-        let nodeToMove = this.nodeTreeMap.get(sourceQueuedId);
-        let targetNode = this.nodeTreeMap.get(destinationQueuedId);
-        if (!nodeToMove || !targetNode || !nodeToMove.parent) return false;
-        if (nodeToMove.playbackStatus === NodePlaybackStatus.Playing) return false;
+    public skip(targetNodeId: number) {
+        let targetNode = this.playbackFront.find(n => n.id === targetNodeId);
+        if (targetNode == null) throw new UnknownNodeIdError(targetNodeId);
 
-        //Splice nodeToMove out of the queue -- [A] -> [B] -> [C]
-        this.primarySpliceNodeOut(nodeToMove);
+        this.log.info(`Skipping node ${this.nodeLogID(targetNode)}`);
+        this.handleNodeFinished(targetNode);
+    }
 
-        if (placeBefore) {
-            //Splice nodeToMove into the queue between targetNode and targetNode's parent
-            this.primarySpliceNodeIn(targetNode.parent, nodeToMove);
-        } else {
-            //Splice nodeToMove into the queue between targetNode and targetNode's first child
-            this.primarySpliceNodeIn(targetNode, nodeToMove);
+    /**
+     * Restart playback of a node that's currently playing.
+     * @param targetNodeId Id of node to restart
+     */
+    public restart(targetNodeId: number) {
+        let targetNode = this.playbackFront.find(n => n.id === targetNodeId);
+        if (targetNode == null) throw new UnknownNodeIdError(targetNodeId);
+
+        this.log.info(`Restarting node ${this.nodeLogID(targetNode)}`)
+        targetNode.renderer.restart();
+        this.fireEventAsync(PlayerEvent.TreeChanged, this.getTreeSnapshot());
+    }
+
+    /**
+     * Stop playback of all nodes and display the default title block.
+     * 
+     * Sequential children of the primary node will be retained, all other queued nodes will be lost.
+     */
+    public stopAll() {
+        let primaryNode = this.playbackFront[0];
+        if (primaryNode.block.id === this.defaultBlock.id) return;
+        this.log.info('Stopping to default block');
+
+        //Stop playback of all branches except the primary one
+        for (let i = this.playbackFront.length - 1; i > 0; i--) {
+            this.stopPlayingNode(this.playbackFront[i]);
         }
 
-        this.reevaluateTempNodes();
-        this.fireEventAsync(PlayerEvent.TreeChanged, this.getTreeSnapshot());
-        return true;
+        //Set up a default title node with the existing play queue attached to it
+        let defaultNode = new PlaybackNode(this.nodeIdCounter++, this.defaultBlock, RelativeStartType.Sequenced);
+        this.nodeTreeMap.set(defaultNode.id, defaultNode);
+
+        if (primaryNode.children.length > 0) {
+            //Pull the current queue off the primary node
+            let nextInPrimaryQueue = primaryNode.children[0];
+            //Remove all children from the primary node
+            for (let i = primaryNode.children.length - 1; i > -1; i--) {
+                primaryNode.removeChildAtIndex(i);
+            }
+
+            //Patch the queue on to the end of the default node
+            defaultNode.addChild(nextInPrimaryQueue);
+        }
+
+        this.startPlayingNode(defaultNode, this.renderHierarchy.getLayerIndex(primaryNode.renderer) + 1);
+
+        if (defaultNode.block.transitionInMs > 0) {
+            setTimeout(() => {this.stopPlayingNode(primaryNode)}, defaultNode.block.transitionInMs + 100);
+        } else {
+            this.stopPlayingNode(primaryNode);
+        }
     }
 
     /**
@@ -579,183 +607,6 @@ export class Player extends MultiListenable<PlayerEvent, any> {
     private nodeLogID(node: PlaybackNode) : string {
         return `${node.id}-${node.block.id}(${node.block.media.name})`;
     }
-
-    //Control panel requests
-    @ControlPanelRequest('getTree')
-    private getQueueRequest() : WSPendingResponse {
-        return new WSSuccessResponse(this.getTreeSnapshot());
-    }
-
-    @ControlPanelRequest('skipForward')
-    private skipForward() : WSPendingResponse { //Skip to the next node on the primary path
-        if (this.playbackFront[0].children.length == 0) {
-            return new WSErrorResponse('QueueEmpty', 'Nothing to skip to - the queue is empty');
-        }
-
-        let currentNode = this.playbackFront[0];
-        this.log.info(`Skipping node ${this.nodeLogID(currentNode)}`);
-        this.handleNodeFinished(currentNode); //Fire the finished handler for this node right now
-        return new WSSuccessResponse("Skipped");
-    }
-
-    @ControlPanelRequest('stopToTitle')
-    private stopToTitleRequest() : WSPendingResponse {
-        let primaryNode = this.playbackFront[0];
-
-        if (primaryNode.block.id == this.defaultBlock.id) {
-            return new WSErrorResponse('AlreadyStopped', 'The default title block is already playing');
-        }
-        this.log.info('Stopping to default block');
-
-        //Stop playback of all branches except the primary one
-        for (let i = this.playbackFront.length - 1; i > 0; i--) {
-            this.stopPlayingNode(this.playbackFront[i]);
-        }
-
-        //Set up a default node with the existing play queue attached to it
-        let defaultNode = new PlaybackNode(this.nodeIdCounter++, this.defaultBlock, RelativeStartType.Sequenced);
-        this.nodeTreeMap.set(defaultNode.id, defaultNode);
-
-        if (primaryNode.children.length > 0) {
-            //Pull the current queue off the primary node
-            let nextInPrimaryQueue = primaryNode.children[0];
-            //Remove all children from the primary node
-            for (let i = primaryNode.children.length - 1; i > -1; i--) {
-                primaryNode.removeChildAtIndex(i);
-            }
-
-            //Patch the queue on to the end of the default node
-            defaultNode.addChild(nextInPrimaryQueue);
-        }
-
-        this.startPlayingNode(defaultNode, this.renderHierarchy.getLayerIndex(primaryNode.renderer) + 1);
-
-        if (defaultNode.block.transitionInMs > 0) {
-            /*
-             The default block has an in transition (eg. 1s fade).
-             Wait until it has finished before we remove the lower block.
-            */
-
-            setTimeout(() => {this.stopPlayingNode(primaryNode)}, defaultNode.block.transitionInMs + 100);
-        } else {
-            this.stopPlayingNode(primaryNode);
-        }
-
-        return new WSSuccessResponse('Stopped');
-    }
-
-    @ControlPanelRequest('restartBlock')
-    private restartPlaybackRequest() : WSPendingResponse {
-        //Restart the current primary node
-        let currentNode = this.playbackFront[0];
-        let nListener = this.nodeListenersMap.get(currentNode.id);
-
-        this.log.info('Restarting current block')
-        currentNode.renderer.restart();
-        this.fireEventAsync(PlayerEvent.TreeChanged, this.getTreeSnapshot());
-
-        return new WSSuccessResponse('Restarted');
-    }
-
-    @ControlPanelRequest('queueChange', QueueChange.isInstance)
-    private scheduleChangeRequest(requestedChange: QueueChange) : WSPendingResponse {
-        if (requestedChange.queueIdTarget === -1) {
-            //This is a delete request
-            this.dequeueNode(requestedChange.queueIdToMove);
-            return new WSSuccessResponse(`ContentBlock ${requestedChange.queueIdToMove} removed`);
-        } else {
-            //This is a reorder request
-            let success = this.reorderQueuedNode(requestedChange.queueIdToMove, requestedChange.queueIdTarget, requestedChange.placeBefore);
-            if (success) {
-                return new WSSuccessResponse(`ContentBlock ${requestedChange.queueIdToMove} moved`);
-            } else {
-                return new WSErrorResponse('Invalid queue IDs');
-            }
-        }
-    }
-
-    @ControlPanelRequest('updateContentBlock', AcceptAny)
-    private updateBlockRequest(data: any): WSPendingResponse {
-        return new Promise((resolve, reject) => {
-            //Try to create a new content block from the provided one
-            this.createContentBlockFromRequest(data.block).then((contentBlock: ContentBlock) => {
-                contentBlock.id = data.block.id; //Replace the generated id with the target id
-                if (this.updateQueuedNode(data.block.queuedId, contentBlock)) {
-                    resolve(new WSSuccessResponse(`Updated block with id ${contentBlock.id}`));
-                } else {
-                    reject(new WSErrorResponse('Invalid target block'));
-                };
-            }).catch(error => {
-                console.error('Failed to create content block from request:', error);
-                reject(error);
-            });
-        });
-    }
-
-    @ControlPanelRequest('addContentBlock', AcceptAny)
-    private addContentBlockRequest(data: any) : WSPendingResponse {
-        return new WSErrorResponse('NotImplemented');
-
-/*         return new Promise((resolve, reject) => {
-            this.createContentBlockFromRequest(data.block).then((contentBlock: ContentBlock) => {
-                this.rerunState.player.enqueueBlock(contentBlock);
-                resolve(new SuccessResponse(`Enqueued content block ${data.block.id}`));
-            }).catch(error => {
-                console.error('Failed to enqueue new content block:', error);
-                resolve(error);
-            });
-        }); */
-    }
-
-    private createContentBlockFromRequest(requestedBlock: any) : Promise<ContentBlock> {
-        return new Promise((resolve, reject) => {
-            //Try to create the MediaObject
-            this.createMediaObjectFromRequest(requestedBlock.media, this.rerunComponents).then((mediaObject: MediaObject) => {
-                let block = new ContentBlock(mediaObject);
-                block.colour = requestedBlock.colour;
-                resolve(block);
-            }).catch(error => reject(error));
-        });
-    }
-    
-    private createMediaObjectFromRequest(requestedMedia: any, rerunState: PublicRerunComponents): Promise<MediaObject> {
-        return new Promise((resolve, reject) => {
-            let newMedia = MediaObject.CreateEmpty(requestedMedia.type);
-            newMedia.name = requestedMedia.name;
-
-            switch (requestedMedia.type) {
-                case 'Local video file':
-                    //Check that the file exists
-                    if (fs.existsSync(requestedMedia.location.path)) {
-                        if (!fs.lstatSync(requestedMedia.location.path).isDirectory()) {
-                            //Get file metadata for this media object
-                            mediaObjectFromVideoFile(requestedMedia.location.path).then((generatedMedia: MediaObject) => {
-                                generatedMedia.name = requestedMedia.name; //Set the requested name rather than the generated one
-                                resolve(generatedMedia);
-                            }).catch(error => reject(error));
-                        } else {
-                            reject('Provided path is a directory, not a file');
-                        }
-                    } else {
-                        reject('File not found');
-                    }
-                    break;
-                case 'Youtube video':
-                    mediaObjectFromYoutube(requestedMedia.location.path, rerunState.downloadBuffer).then((media: MediaObject) => {
-                        resolve(media);
-                    }).catch(error => reject(error));
-                    break;
-                case 'RTMP stream':
-                    reject('RTMP not yet implemented');
-                    break;
-                case 'Rerun title graphic':
-                    reject('Rerun graphic not yet implemented');
-                    break;
-                default:
-                    reject('Unknown media type "' + requestedMedia.type + '"');
-            }
-        });
-}
 }
 
 /**
@@ -811,7 +662,7 @@ export enum RelativeStartType {
 /**
  * A read-only snapshot of a PlaybackNode taken at a certain time.
  */
- export class PlaybackNodeSnapshot {
+export class PlaybackNodeSnapshot {
     readonly id: number;  
     readonly status: NodePlaybackStatus;
     readonly timestamp: number;
@@ -833,5 +684,27 @@ export enum RelativeStartType {
         this.children = node.children.map((child: PlaybackNode) => new PlaybackNodeSnapshot(child));
 
         this.block = node.block;
+    }
+}
+
+export class UnknownNodeIdError extends Error {
+    constructor(readonly unknownNodeId: number) {
+        super(`Unknown node id ${unknownNodeId}`);
+    }
+
+    static isInstance(something: any) : something is UnknownNodeIdError {
+        return typeof something.unknownNodeId === 'number';
+    }
+}
+
+export class ModifyingActiveNodeError extends Error {
+    readonly targetNodeStatus: NodePlaybackStatus;
+    constructor(activeNode: PlaybackNode) {
+        super(`Cannot modify the target node while it is in the ${activeNode.playbackStatus} state`);
+        this.targetNodeStatus = activeNode.playbackStatus;
+    }
+
+    static isInstance(something: any) : something is ModifyingActiveNodeError {
+        return something.targetNodeStatus != null;
     }
 }
