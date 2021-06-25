@@ -1,7 +1,7 @@
 import { SaveableProperty } from "../../persistence/SaveableObject";
 import { IntegerProperty, NumberProperty, StringSelect } from "../../persistence/ValidatedProperty";
 import { PlaybackOffset } from "../../playback/Player";
-import { EnqueuedContentBlock, RelativeStartType, Player, TempNodeProvider } from "../../playback/Player";
+import { RelativeStartType, Player, TempNodeProvider } from "../../playback/Player";
 import PlayBlockAction from "../actions/PlayBlockAction";
 import ShowGraphicAction from "../actions/ShowGraphicAction";
 import RuleAction from "../RuleAction";
@@ -34,7 +34,7 @@ export default class DuringBlockPlaybackCondition extends RuleCondition {
 
             let contentBlockToPlay = linkedAction.getContentBlock();
             
-            let nodeProvider: TempNodeProvider = (queue: EnqueuedContentBlock[]) => {
+            let nodeProvider: TempNodeProvider = (queue) => {
                 let nodes = [];
                 
                 for (let i = 0; i < queue.length; i++) {

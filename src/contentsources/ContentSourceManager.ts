@@ -1,6 +1,6 @@
 import { ContentSource } from './ContentSource';
 import { SingleListenable } from '../helpers/SingleListenable';
-import { Player, PlayerEvent } from '../playback/Player'; 
+import { PlaybackNodeSnapshot, Player, PlayerEvent } from '../playback/Player'; 
 import { IJSONSavable, JSONSavable } from '../persistence/JSONSavable';
 import { LocalDirectorySource } from './LocalDirectorySource';
 import ControlPanelHandler, { ControlPanelListener, ControlPanelRequest } from '../networking/ControlPanelHandler';
@@ -13,7 +13,7 @@ const uuidv4 = require('uuid/v4');
 export class ContentSourceManager extends SingleListenable<ContentSource[]> implements IJSONSavable {
     constructor(public savePath: string, private player : Player) {
         super();
-        player.on(PlayerEvent.PlayQueueChanged, (newQueue) => this.onQueueChanged());
+        player.on(PlayerEvent.TreeChanged, (newTree) => this.onTreeChanged(newTree));
 
         ControlPanelHandler.getInstance().publish(this.AutoPoolOptionsChannel, this.autoPoolOptions);
         ControlPanelHandler.getInstance().publish(this.AutoPoolListChannel, this.getAutoSourcePool());
@@ -74,7 +74,7 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
     private currentPullProgress = 0;
 
     updateAutoPoolNow() {
-        this.onQueueChanged();
+        this.onTreeChanged(this.player.getTreeSnapshot());
     }
 
     private partialPoll() {
@@ -84,8 +84,18 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
         }
     }
 
-    private onQueueChanged() {
-        let newQueueLength = this.player.getQueue().length;
+    private depthFirstChildCount(root: PlaybackNodeSnapshot) : number {
+        let n = 0;
+        let node = root;
+        while (node.children.length !== 0) {
+            n++;
+            node = node.children[0];
+        }
+        return n;
+    }
+
+    private onTreeChanged(newTree: PlaybackNodeSnapshot[]) {
+        let newQueueLength = this.depthFirstChildCount(newTree[0]) + 1;
         if (this.autoPoolOptions.enabled && !this.pullInProgress && newQueueLength < this.autoPoolOptions.targetQueueSize) {
             const sourcePool = this.getAutoSourcePool();
 
@@ -118,8 +128,8 @@ export class ContentSourceManager extends SingleListenable<ContentSource[]> impl
         }
     }
 
-    private readonly AutoPoolOptionsChannel = 'cs-options';
-    private readonly AutoPoolListChannel = 'cs-list';
+    public readonly AutoPoolOptionsChannel = 'cs-auto-options';
+    public readonly AutoPoolListChannel = 'cs-auto-list';
 
     setAutoPoolOptions(newOptions: ContentSourceManager.AutoPoolOptions) {
         if (!this.autoPoolOptions.enabled && newOptions.enabled) {

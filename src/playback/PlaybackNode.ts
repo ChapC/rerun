@@ -52,7 +52,7 @@ export default class PlaybackNode extends MultiListenable<PlaybackNodeEvent, Pla
     addChild(child: PlaybackNode) {
         this._children.push(child);
         child._parent = this;
-        this.fireEvent(PlaybackNodeEvent.ChildAdded, child);
+        this.fireEventNow(PlaybackNodeEvent.ChildAdded, child);
     }
 
     removeChild(child: PlaybackNode) {
@@ -64,7 +64,7 @@ export default class PlaybackNode extends MultiListenable<PlaybackNodeEvent, Pla
         if (index > -1 && index < this._children.length) {
             let child = this._children.splice(index, 1)[0];
             child._parent = null;
-            this.fireEvent(PlaybackNodeEvent.ChildRemoved, child);
+            this.fireEventNow(PlaybackNodeEvent.ChildRemoved, child);
         } else {
             throw new RangeError("Child index out of bounds");
         }
@@ -73,12 +73,13 @@ export default class PlaybackNode extends MultiListenable<PlaybackNodeEvent, Pla
     insertChild(child: PlaybackNode, index: number) {
         this._children.splice(index, 0, child);
         child._parent = this;
-        this.fireEvent(PlaybackNodeEvent.ChildAdded, child);
+        this.fireEventNow(PlaybackNodeEvent.ChildAdded, child);
     }
 
     setPlaybackStatus(newStatus: NodePlaybackStatus) {
         this._playbackStatus = newStatus;
         this._playbackStatusTimestamp = Date.now();
+        this.fireEventAsync(PlaybackNodeEvent.StatusChanged, null);
     }
 
     /**
@@ -90,4 +91,4 @@ export default class PlaybackNode extends MultiListenable<PlaybackNodeEvent, Pla
 }
 
 export enum NodePlaybackStatus { Queued = 'Queued', TransitioningIn = 'TransitionIn', Playing = 'Playing', TransitioningOut = 'TransitionOut', Finished = 'Finished' }
-export enum PlaybackNodeEvent { ChildAdded, ChildRemoved }
+export enum PlaybackNodeEvent { ChildAdded, ChildRemoved, StatusChanged }

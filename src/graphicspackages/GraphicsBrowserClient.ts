@@ -6,7 +6,7 @@ the graphic's code.
 import WebSocket from "isomorphic-ws";
 import { WSConnection, WSEvent, WSPendingResponse, WSErrorResponse, WSSuccessResponse } from "../networking/WebsocketConnection";
 // -- Type-only imports (won't be bundled into the browser JS) --
-import type { ContentBlock } from "../playback/ContentBlock";
+//import type { PlaybackNodeSnapshot } from "../playback/PlaybackNodeSnapshot";
 // ----
 
 // -- Filled in by Rerun server at runtime --
@@ -22,7 +22,7 @@ if (queryString.has('renderer')) {
 }
 
 const wsAddress = `ws://127.0.0.1:8080/graphicsWS?${wsConnectQuery}`;
-const PlayerQueueChannel = 'player-queue';
+const PlayerTreeChannel = 'player-tree';
 const info = (msg: any, obj?: any) => obj ? console.info(`[rerun] ${msg}`, obj) : console.info(`[rerun] ${msg}`);
 const error = (msg: any, obj?: any) => obj ? console.error(`[rerun] ${msg}`, obj) : console.error(`[rerun] ${msg}`);
 
@@ -73,7 +73,7 @@ class GraphicsBrowserClient {
         //@ts-ignore
         let w = window;
     
-        this.ws.subscribe(PlayerQueueChannel, (newQueue) => { this.playerInfo.queue = newQueue; });
+        this.ws.subscribe(PlayerTreeChannel, (newTree) => { this.playerInfo.tree = newTree; });
         this.ws.publish(GraphicStateChannel, this.currentState);
         this.ws.setRequestHandler('progress', () => new WSSuccessResponse(this.currentState === GraphicState.In ? Date.now() - this.stateUpdatedTimestamp : 0));
 
@@ -207,7 +207,7 @@ class GraphicsBrowserClient {
 }
 
 class BrowserPlayerInfo {
-    queue: ContentBlock[];
+    tree: any[];
 }
 
 //@ts-ignore

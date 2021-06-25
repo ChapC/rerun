@@ -23,10 +23,14 @@ export abstract class ContentRenderer extends MultiListenable<RendererStatus, nu
 
     /**
      * Begin playback of the media currently loaded in the renderer.
+     * 
+     * If the media has an in transition, this method will start it.
      */
     abstract play() : void;
     /**
      * Stop playback and unload media.
+     * 
+     * If the media has an out transition, this method will start it.
      */
     abstract stopAndUnload() : void;
     /**
@@ -68,7 +72,7 @@ export abstract class ContentRenderer extends MultiListenable<RendererStatus, nu
         this.status = newStatus;
         this.statusListenable.trigger({ oldStatus: oldStatus, newStatus: newStatus });
         this.statusLastUpdatedAt = Date.now();
-        this.fireEvent(newStatus, null);
+        this.fireEventNow(newStatus, null);
     }
 
     /**

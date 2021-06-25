@@ -3,7 +3,7 @@ import express from 'express';
 import expressWs from 'express-ws';
 import fs from "fs";
 import { MediaObject } from "./playback/MediaObject";
-import { Player, PlaybackOffset, EnqueuedContentBlock, RelativeStartType, PlayerEvent } from "./playback/Player";
+import { Player, PlaybackOffset, PlayerEvent, PlaybackNodeSnapshot } from "./playback/Player";
 import { ContentRenderer, ContentRendererListenerGroup } from './playback/renderers/ContentRenderer';
 import { OBSVideoRenderer } from './playback/renderers/OBSVideoRenderer';
 import { RerunGraphicRenderer } from './playback/renderers/RerunGraphicRenderer';
@@ -32,6 +32,7 @@ import InBetweenBlocksCondition from "./rules/conditions/InBetweenBlocksConditio
 import ShowGraphicAction from "./rules/actions/ShowGraphicAction";
 import WebsocketLobby from "./networking/WebsocketLobby";
 import WSPublishRepeater from "./networking/WSPublishRepeater";
+import { NodePlaybackStatus } from "./playback/PlaybackNode";
 
 const app = expressWs(express()).app;
 const path = require('path');
@@ -275,7 +276,7 @@ startup.appendStep("Content renderers", (rerunState, l) => {
     //Graphic title renderer
     let createGraphicRenderer = (id: number) => {
         let browserSource = rerunState.obs.createSource('graphic' + id, 'browser_source', {
-            width: new OBSInt(1920), height: new OBSInt(1080), reroute_audio: new OBSBool(true), fps_custom: new OBSInt(30) //TODO: Match OBS video settings
+            width: new OBSInt(1920), height: new OBSInt(1080), reroute_audio: new OBSBool(true), //fps_custom: new OBSInt(60) //TODO: Match OBS video settings
         });
         return new RerunGraphicRenderer(id, browserSource, rerunState.browserGraphicSockets, rerunState.graphicsLoader.getLongLayerURL);
     }
@@ -360,21 +361,16 @@ startup.appendStep("Player", (rerunState, l) => {
     rerunState.player = new Player(rerunState.rendererPool, rerunState.renderHierarchy, rerunState, titleBlock);
 
     //Send player events over websockets (for control panels and graphic clients)
-    const PlayerActiveBlocksChannel = 'player-activeblocks';
-    const PlayerQueueChannel = 'player-queue';
+    const PlayerTreeChannel = 'player-tree';
 
-    rerunState.player.on(PlayerEvent.ActiveBlocksChanged, (listOfBlocks) => {
-        ControlPanelHandler.getInstance().publish(PlayerActiveBlocksChannel, listOfBlocks);
+    rerunState.player.on(PlayerEvent.TreeChanged, (newTree: PlaybackNodeSnapshot[]) => {
+        ControlPanelHandler.getInstance().publish(PlayerTreeChannel, newTree);
+        rerunState.graphicsPublishGroup.publish(PlayerTreeChannel, newTree);
     });
 
-    rerunState.player.on(PlayerEvent.PlayQueueChanged, (newQueue) => {
-        ControlPanelHandler.getInstance().publish(PlayerQueueChannel, newQueue);
-        rerunState.graphicsPublishGroup.publish(PlayerQueueChannel, newQueue);
-    });
-
-    ControlPanelHandler.getInstance().publish(PlayerActiveBlocksChannel, rerunState.player.getPlayingBlocks());
-    ControlPanelHandler.getInstance().publish(PlayerQueueChannel, rerunState.player.getQueue());
-    rerunState.graphicsPublishGroup.publish(PlayerQueueChannel, rerunState.player.getQueue());
+    let initialTree = rerunState.player.getTreeSnapshot();
+    ControlPanelHandler.getInstance().publish(PlayerTreeChannel, initialTree);
+    rerunState.graphicsPublishGroup.publish(PlayerTreeChannel, initialTree);
 
     return Promise.resolve();
 }, function cleanup() {
@@ -382,18 +378,18 @@ startup.appendStep("Player", (rerunState, l) => {
     rerunState.player = null;
 });
 
-//The top {itemsToPreload} items in the queue should be downloaded into the buffer
 startup.appendStep("Download buffer hook", (rerunState, l) => {
     const itemsToPreload = 3;
     
-    rerunState.player.on(PlayerEvent.PlayQueueChanged, (newQueue : ContentBlock[]) => {
-        for (let i = 0; i < Math.min(itemsToPreload, newQueue.length); i++) {
-            let block = newQueue[i];
-            if (block.media.location instanceof WebBufferLocation) {
-                rerunState.downloadBuffer.getJobFromLocation(block.media.location).start();
-            }
-        }
-    });
+    //Depth-first search for preload-able items
+    // rerunState.player.on(PlayerEvent.TreeChanged, (newTree : PlaybackNodeSnapshot[]) => {
+    //     for (let i = 0; i < newTree.length; i++) {
+    //         let root = newTree[i];
+    //         if (block.media.location instanceof WebBufferLocation) {
+    //             rerunState.downloadBuffer.getJobFromLocation(block.media.location).start();
+    //         }
+    //     }
+    // });
 
     return Promise.resolve();
 }, function cleanup() {});

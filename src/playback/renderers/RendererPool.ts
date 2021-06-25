@@ -40,7 +40,7 @@ export default class RendererPool {
         if (capableRenderers.length == 0) {
             //No renderers are pooled for this content type. Create one
             selectedRenderer = this.createNewRenderer(forContentType);
-            selectedRenderer.onStatusUpdated((s) => this.l.debug(`Renderer ${forContentType}-${selectedRenderer.id} updated status from ${s.oldStatus} -> ${s.newStatus}`));
+            this.logStateChanges(selectedRenderer);
         } else {
             selectedRenderer = capableRenderers.pop();
         }
@@ -79,9 +79,15 @@ export default class RendererPool {
             this.leasedRenderers.delete(rendererId);
             if (this.availableRenderers.get(lease.renderer.supportedContentType) == null) this.availableRenderers.set(lease.renderer.supportedContentType, []);
             this.availableRenderers.get(lease.renderer.supportedContentType).push(lease.renderer);
+
+            this.logStateChanges(lease.renderer);
         } else {
             this.l.warn(`Tried to return ContentRenderer ${rendererId}, but that renderer was not acquired from this pool.`);
         }
+    }
+
+    private logStateChanges(renderer: ContentRenderer) {
+        renderer.onStatusUpdated((s) => this.l.debug(`Renderer ${renderer.supportedContentType}-${renderer.id} updated status from ${s.oldStatus} -> ${s.newStatus}`));
     }
 }
 

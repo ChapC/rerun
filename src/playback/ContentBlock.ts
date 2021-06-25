@@ -1,13 +1,14 @@
 import {MediaObject} from './MediaObject';
 const uuidv4 = require('uuid/v4');
 
+//TODO: Migrate to ImmutableSaveableObject
 //A MediaObject with additional playback-related information, ready to be added to the play queue
 export class ContentBlock {
     id:string;
     colour:string = '#282482';
     media:MediaObject;
     mediaStatus: MediaObject.Status = MediaObject.Status.UNTRACKED;
-    //TODO: Add playback modifiers here (start/end trimming)
+    //TODO: Add playback modifiers here (start/end trimming, transformations)
 
     //ContentBlocks can have in and out transition times for fades/animations
     transitionInMs = 0;

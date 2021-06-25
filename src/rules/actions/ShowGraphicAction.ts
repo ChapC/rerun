@@ -2,6 +2,7 @@ import { GraphicLayer, GraphicPackageLoader } from "../../graphicspackages/Graph
 import { AfterDeserialize, SaveableProperty } from "../../persistence/SaveableObject";
 import { NumberProperty, TreePath } from "../../persistence/ValidatedProperty";
 import { ContentBlock } from "../../playback/ContentBlock";
+import { NodePlaybackStatus as PlaybackNodeStatus } from "../../playback/PlaybackNode";
 import { PlaybackOffset } from "../../playback/Player";
 import { RelativeStartType, Player } from "../../playback/Player";
 import RuleAction from "../RuleAction";
@@ -27,9 +28,10 @@ export default class ShowGraphicAction extends RuleAction {
 
     run(): void {
         //Start playing the graphic block now. We do this by enqueuing it relative to current block
-        let currentlyPlayingBlock = this.player.getPlayingBlocks()[0];
-        let startNowOffset = new PlaybackOffset(PlaybackOffset.Type.MsAfterStart, currentlyPlayingBlock.progressMs);
-        this.player.enqueueBlockRelative(this.graphicContentBlock, currentlyPlayingBlock, RelativeStartType.Concurrent, startNowOffset);
+        let current = this.player.getTreeSnapshot()[0];
+        //TODO: Create a playImmediate player method for this use case
+        let startNowOffset = new PlaybackOffset(PlaybackOffset.Type.MsAfterStart, current.status === PlaybackNodeStatus.Playing ? Date.now() - current.timestamp : 0);
+        this.player.enqueueBlockRelative(this.graphicContentBlock, current, RelativeStartType.Concurrent, startNowOffset);
     }
 
     getContentBlock() : ContentBlock {

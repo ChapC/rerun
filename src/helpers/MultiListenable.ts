@@ -124,13 +124,35 @@ export abstract class MultiListenable<TEventKey, TEventData> {
         this.timeoutIds.clear();
     }
 
-    protected fireEvent(eventName:TEventKey, eventData:TEventData) {
+    /**
+     * Fire an event immediately. This method will block until all callbacks are finished.
+     */
+    protected fireEventNow(eventName:TEventKey, eventData:TEventData) {
         let callbackList = this.eventListeners.get(eventName);
         if (callbackList != null) {
             for (let i = 0; i < callbackList.length; i++) {
                 callbackList[i].callback(eventData);
             }
         }
+    }
+
+    private asyncPendingTimeouts: Map<TEventKey, number> = new Map(); 
+
+    /**
+     * Fire an event at the end of the event loop (setTimeout 0).
+     * 
+     * Multiple calls to this method within the same event loop are debounced, so
+     * the event will only be called once with the latest eventData.
+     */
+    protected fireEventAsync(eventName:TEventKey, eventData:TEventData) {
+        if (this.asyncPendingTimeouts.has(eventName)) {
+            clearTimeout(<any> this.asyncPendingTimeouts.get(eventName));
+        }
+        
+        this.asyncPendingTimeouts.set(eventName, <any> setTimeout(() => {
+            this.asyncPendingTimeouts.delete(eventName);
+            this.fireEventNow(eventName, eventData);
+        }, 0));
     }
 }
 
@@ -210,7 +232,7 @@ export class ListenerGroup<TEventKey, TEventData> {
 }
 
 export class ControllableMultiListenable<TEventKey, TEventData> extends MultiListenable<TEventKey, TEventData> {
-    public fireEvent(eventName:TEventKey, eventData:TEventData) {
-        super.fireEvent(eventName, eventData);
+    public fireEventNow(eventName:TEventKey, eventData:TEventData) {
+        super.fireEventNow(eventName, eventData);
     }
 }

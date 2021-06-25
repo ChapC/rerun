@@ -10,6 +10,11 @@ export class OBSVideoRenderer extends ContentRenderer {
     constructor(readonly id: number, source: OBSSource) {
         super();
         this.vlcSource = source;
+
+        this.vlcSource.on('media_ended', () => {
+            console.info('OBSVIDEO - media_ended');
+            this.updateStatus(RendererStatus.Finished);
+        });
     }
 
     private currentMedia: MediaObject = null;
@@ -60,12 +65,12 @@ export class OBSVideoRenderer extends ContentRenderer {
 
         this.vlcSource.setEnabled(true);
         this.vlcSource.playMedia();
-        this.updateStatus(RendererStatus.Playing);
+        this.vlcSource.once('media_started', () => this.updateStatus(RendererStatus.Playing));
     }
 
     restart() : void {
         this.vlcSource.restartMedia();
-        this.updateStatus(RendererStatus.Playing);
+        //this.vlcSource.once('media_restart', () => this.updateStatus(RendererStatus.Playing)); //Doesn't appear to be called
     }
 
     getOBSSource() { return this.vlcSource; }

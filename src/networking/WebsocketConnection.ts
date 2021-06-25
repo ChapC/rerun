@@ -24,7 +24,7 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
                 this.queuedForSend.forEach((message) => this.ws.send(message));
                 this.queuedForSend = [];
     
-                this.fireEvent(WSEvent.Open, null);
+                this.fireEventNow(WSEvent.Open, null);
                 this.receivedHeartbeat(); //Start expecting heartbeats
                 this.heartbeatSendInterval = setInterval(() => this.sendHeartbeat(), this.heartbeatFrequency); //Start sending heartbeats
             });
@@ -132,11 +132,11 @@ export class WSConnection extends MultiListenable<WSEvent, any> {
         });
 
         ws.addEventListener('error', (error) => {
-            this.fireEvent(WSEvent.Error, error);
+            this.fireEventNow(WSEvent.Error, error);
             clearInterval(this.heartbeatSendInterval);
         });
         ws.addEventListener('close', (event) => {
-            this.fireEvent(WSEvent.Close, {code: event.code, reason: event.reason});
+            this.fireEventNow(WSEvent.Close, {code: event.code, reason: event.reason});
             clearInterval(this.heartbeatSendInterval);
         });
     }

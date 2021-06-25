@@ -37,6 +37,7 @@ export class RerunGraphicRenderer extends ContentRenderer {
             }
         } else if (newState === GraphicState.Out) {
             if (this.pendingUnload) {
+                this.browserSource.updateSettings({ url: new OBSString('about:blank') });
                 this.currentGraphic = null;
                 this.stateSubscription.cancel();
                 this.stateSubscription = null;
@@ -66,7 +67,7 @@ export class RerunGraphicRenderer extends ContentRenderer {
         if (this.currentGraphic !== null) {
             //Unload the current graphic now
             this.stopAndUnload();
-        }        
+        }
         this.currentGraphic = media;
 
         //Point the browser source to this layer's webpage
@@ -82,6 +83,7 @@ export class RerunGraphicRenderer extends ContentRenderer {
             this.updateStatus(RendererStatus.Ready);
         })
         .catch((error) => {
+            console.error(`GraphicRenderer-${this.id}: Error acquiring client socket`, error);
             this.updateStatus(RendererStatus.Error);
         });
         
