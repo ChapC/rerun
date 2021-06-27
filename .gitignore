@@ -1,13 +1,4 @@
-#Graphics packages
-graphics/
-#Temporary downloads
-temp/
-#User settings
-userdata/
-#OBS binaries
-/obs/
-
-build
+build/
 
 #VSCode
 .vscode/*

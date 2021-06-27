@@ -1,0 +1,14 @@
+{
+  "name": "@rerun/common",
+  "private": true,
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "build": "tsc"
+  },
+  "author": "Chap Callanan",
+  "license": "GPL-3.0",
+  "dependencies": {
+    "isomorphic-ws": "^4.0.1"
+  }
+}

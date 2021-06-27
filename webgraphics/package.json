@@ -1,0 +1,17 @@
+{
+  "name": "@rerun/webgraphics",
+  "private": true,
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "rimraf build && tsc && browserify build/GraphicsBrowserClient.js > build/bundle.js && uglifyjs build/bundle.js --compress --mangle -o build/browserclient.min.js"
+  },
+  "author": "Chap Callanan",
+  "license": "GPL-3.0",
+  "devDependencies": {
+    "browserify": "^17.0.0",
+    "rimraf": "^3.0.2",
+    "uglify-js": "^3.13.9"
+  }
+}
