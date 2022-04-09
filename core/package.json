@@ -42,7 +42,7 @@
     "isomorphic-ws": "^4.0.1",
     "jsdom": "^16.0.1",
     "keypress": "^0.2.1",
-    "moment": "^2.24.0",
+    "moment": "^2.29.2",
     "obs-websocket-js": "^4.0.0",
     "recursive-readdir": "^2.2.2",
     "reflect-metadata": "^0.1.13",
