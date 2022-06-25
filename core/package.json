@@ -40,7 +40,7 @@
     "fluent-ffmpeg": "^2.1.2",
     "googleapis": "^47.0.0",
     "isomorphic-ws": "^4.0.1",
-    "jsdom": "^16.0.1",
+    "jsdom": "^16.5.0",
     "keypress": "^0.2.1",
     "moment": "^2.24.0",
     "obs-websocket-js": "^4.0.0",
